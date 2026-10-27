@@ -1,0 +1,16 @@
+:80 {
+	handle /api/* {
+		uri strip_prefix /api
+		reverse_proxy tb-backend:8080
+	}
+	handle /customer/* {
+		reverse_proxy tb-customer:80
+	}
+	handle /courier/* {
+		reverse_proxy tb-courier:80
+	}
+	handle /merchant/* {
+		reverse_proxy tb-merchant:80
+	}
+	respond "Trackfud gateway: open /customer/ /courier/ /merchant/" 200
+}

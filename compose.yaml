@@ -1,0 +1,69 @@
+services:
+  db:
+    container_name: tb-db
+    image: docker.io/postgis/postgis:18-3.6
+    environment:
+      POSTGRES_USER: Trackfud
+      POSTGRES_PASSWORD: Trackfud
+      POSTGRES_DB: Trackfud
+    ports:
+      - "5432:5432"
+    volumes:
+      - tb_pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U Trackfud"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  mailpit:
+    container_name: tb-mailpit
+    image: docker.io/axllent/mailpit:latest
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+  backend:
+    container_name: tb-backend
+    build:
+      context: ./backend
+      dockerfile: Containerfile
+    environment:
+      DATABASE_URL: postgres://Trackfud:Trackfud@db:5432/Trackfud?sslmode=disable
+      TB_JWT_SECRET: dev-only-change-me-32chars-minimum!!
+      TB_SMTP_HOST: mailpit
+      TB_DEMO_MODE: "true"
+    volumes:
+      - tb_uploads:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8081:8080"
+  customer:
+    container_name: tb-customer
+    build:
+      context: ./frontend-customer
+      dockerfile: Containerfile
+    depends_on: [backend]
+  courier:
+    container_name: tb-courier
+    build:
+      context: ./frontend-runner-biker
+      dockerfile: Containerfile
+    depends_on: [backend]
+  merchant:
+    container_name: tb-merchant
+    build:
+      context: ./frontend-merchant
+      dockerfile: Containerfile
+    depends_on: [backend]
+  gateway:
+    container_name: tb-gateway
+    image: docker.io/library/caddy:2
+    ports:
+      - "8000:80"
+    volumes:
+      - ./gateway/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on: [backend, customer, courier, merchant]
+volumes:
+  tb_pgdata:
+  tb_uploads:

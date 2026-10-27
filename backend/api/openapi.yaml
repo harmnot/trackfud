@@ -1,0 +1,3378 @@
+openapi: 3.1.0
+info: { title: Trackfud API, version: 0.1.0 }
+servers: [{ url: /api/v1 }]
+paths:
+    /healthz:
+        get: { operationId: healthz, responses: { "200": { description: ok } } }
+    /v1/config/public:
+        get:
+            {
+                operationId: publicConfig,
+                responses: { "200": { description: ok } },
+            }
+    /v1/auth/signup:
+        post:
+            {
+                operationId: signup,
+                responses:
+                    {
+                        "201": { description: created },
+                        "400": { $ref: "#/components/responses/Problem" },
+                    },
+            }
+    /v1/auth/login:
+        post:
+            {
+                operationId: login,
+                responses:
+                    {
+                        "200": { description: ok },
+                        "401": { $ref: "#/components/responses/Problem" },
+                    },
+            }
+    /v1/auth/refresh:
+        post:
+            {
+                operationId: refresh,
+                responses:
+                    {
+                        "200": { description: ok },
+                        "401": { $ref: "#/components/responses/Problem" },
+                    },
+            }
+    /v1/auth/logout:
+        post: { operationId: logout, responses: { "204": { description: ok } } }
+    /v1/auth/demo-login:
+        post:
+            {
+                operationId: demoLogin,
+                responses:
+                    {
+                        "200": { description: ok },
+                        "404": { $ref: "#/components/responses/Problem" },
+                    },
+            }
+    /v1/auth/verify-email:
+        post:
+            {
+                operationId: verifyEmail,
+                responses: { "200": { description: ok } },
+            }
+    /v1/auth/me:
+        get:
+            {
+                operationId: me,
+                security: [{ bearer: [] }],
+                responses: { "200": { description: ok } },
+            }
+    /v1/files/presign:
+        post:
+            {
+                operationId: presign,
+                security: [{ bearer: [] }],
+                responses: { "201": { description: created } },
+            }
+    /v1/files/local/{id}:
+        put:
+            {
+                operationId: localUpload,
+                parameters:
+                    [
+                        {
+                            name: id,
+                            in: path,
+                            required: true,
+                            schema: { type: string },
+                        },
+                        { name: token, in: query, schema: { type: string } },
+                    ],
+                responses: { "200": { description: ok } },
+            }
+    /v1/files/{id}/content:
+        get:
+            {
+                operationId: fileContent,
+                parameters:
+                    [
+                        {
+                            name: id,
+                            in: path,
+                            required: true,
+                            schema: { type: string },
+                        },
+                    ],
+                responses: { "200": { description: ok } },
+            }
+    /v1/push/vapid-public-key:
+        get:
+            { operationId: vapidKey, responses: { "200": { description: ok } } }
+    /v1/push/subscribe:
+        post:
+            {
+                operationId: pushSubscribe,
+                security: [{ bearer: [] }],
+                responses: { "201": { description: created } },
+            }
+        delete:
+            {
+                operationId: pushUnsubscribe,
+                security: [{ bearer: [] }],
+                responses: { "204": { description: ok } },
+            }
+    /v1/push/test:
+        post:
+            {
+                operationId: pushTest,
+                security: [{ bearer: [] }],
+                responses: { "202": { description: queued } },
+            }
+    /v1/ws/ticket:
+        post:
+            {
+                operationId: wsTicket,
+                security: [{ bearer: [] }],
+                responses: { "201": { description: created } },
+            }
+    /v1/customer/restaurants:
+        get:
+            {
+                operationId: listRestaurants,
+                parameters:
+                    [
+                        { name: lat, in: query, schema: { type: number } },
+                        { name: lng, in: query, schema: { type: number } },
+                    ],
+                responses: { "200": { description: ok } },
+            }
+    /v1/customer/restaurants/{id}:
+        get:
+            {
+                operationId: getRestaurant,
+                parameters:
+                    [
+                        {
+                            name: id,
+                            in: path,
+                            required: true,
+                            schema: { type: string },
+                        },
+                    ],
+                responses: { "200": { description: ok } },
+            }
+    /v1/customer/restaurants/{id}/menu:
+        get:
+            {
+                operationId: getMenu,
+                parameters:
+                    [
+                        {
+                            name: id,
+                            in: path,
+                            required: true,
+                            schema: { type: string },
+                        },
+                    ],
+                responses: { "200": { description: ok } },
+            }
+    /v1/customer/addresses:
+        get:
+            {
+                operationId: listAddresses,
+                security: [{ bearer: [] }],
+                responses: { "200": { description: ok } },
+            }
+        post:
+            {
+                operationId: createAddress,
+                security: [{ bearer: [] }],
+                responses: { "201": { description: created } },
+            }
+    /v1/courier/application:
+        get:
+            {
+                operationId: getApplication,
+                security: [{ bearer: [] }],
+                responses: { "200": { description: ok } },
+            }
+        put:
+            {
+                operationId: saveApplication,
+                security: [{ bearer: [] }],
+                responses: { "200": { description: ok } },
+            }
+    /v1/courier/application/submit:
+        post:
+            {
+                operationId: submitApplication,
+                security: [{ bearer: [] }],
+                responses: { "200": { description: ok } },
+            }
+    /v1/courier/fitness-test:
+        post:
+            {
+                operationId: submitFitness,
+                security: [{ bearer: [] }],
+                responses: { "200": { description: ok } },
+            }
+    /v1/courier/profile:
+        get:
+            {
+                operationId: getCourierProfile,
+                security: [{ bearer: [] }],
+                responses:
+                    {
+                        "200":
+                            {
+                                description: ok,
+                                content:
+                                    {
+                                        application/json:
+                                            {
+                                                schema:
+                                                    {
+                                                        $ref: "#/components/schemas/CourierProfile",
+                                                    },
+                                            },
+                                    },
+                            },
+                        "401": { $ref: "#/components/responses/Problem" },
+                    },
+            }
+        put:
+            operationId: saveCourierProfile
+            security: [{ bearer: [] }]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/CourierProfileInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+    /v1/courier/sessions:
+        get:
+            {
+                operationId: listSessions,
+                security: [{ bearer: [] }],
+                responses:
+                    {
+                        "200":
+                            {
+                                description: ok,
+                                content:
+                                    {
+                                        application/json:
+                                            {
+                                                schema:
+                                                    {
+                                                        $ref: "#/components/schemas/SessionList",
+                                                    },
+                                            },
+                                    },
+                            },
+                    },
+            }
+        post:
+            operationId: startSession
+            security: [{ bearer: [] }]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/StartSession",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "201":
+                    {
+                        description: created,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/SessionEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "429": { $ref: "#/components/responses/Problem" }
+    /v1/courier/sessions/{id}:
+        get:
+            operationId: getSession
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/SessionEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/courier/sessions/{id}/end:
+        post:
+            operationId: endSession
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/SessionEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/courier/sessions/{id}/checkpoints:
+        post:
+            operationId: postCheckpoint
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/CheckpointInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "201": { description: created }
+                "400": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/courier/locations:
+        post:
+            operationId: ingestLocations
+            security: [{ bearer: [] }]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/LocBatch",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/LocAck",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/courier/stats:
+        get:
+            {
+                operationId: courierStats,
+                security: [{ bearer: [] }],
+                responses:
+                    {
+                        "200":
+                            {
+                                description: ok,
+                                content:
+                                    {
+                                        application/json:
+                                            {
+                                                schema:
+                                                    {
+                                                        $ref: "#/components/schemas/CourierStats",
+                                                    },
+                                            },
+                                    },
+                            },
+                    },
+            }
+    /v1/courier/offers:
+        get:
+            operationId: listOffers
+            security: [{ bearer: [] }]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/OfferList",
+                                            },
+                                    },
+                            },
+                    }
+                "401": { $ref: "#/components/responses/Problem" }
+    /v1/courier/offers/{id}/accept:
+        post:
+            operationId: acceptOffer
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/DeliveryEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+                "410": { $ref: "#/components/responses/Problem" }
+    /v1/courier/offers/{id}/decline:
+        post:
+            operationId: declineOffer
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200": { description: ok }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/courier/deliveries/active:
+        get:
+            operationId: activeDelivery
+            security: [{ bearer: [] }]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/DeliveryEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "401": { $ref: "#/components/responses/Problem" }
+    /v1/courier/deliveries/{id}:
+        get:
+            operationId: getDelivery
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/DeliveryEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/courier/deliveries/{id}/arrived:
+        post:
+            operationId: arrivedDelivery
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/ArrivedInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/DeliveryEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/courier/deliveries/{id}/pickup:
+        post:
+            operationId: pickupDelivery
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/PickupInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/DeliveryEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/courier/deliveries/{id}/delivered:
+        post:
+            operationId: deliveredDelivery
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/DeliveredInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/DeliveryEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/courier/deliveries/{id}/messages:
+        get:
+            operationId: listCourierMessages
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/MessageList",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+        post:
+            operationId: postCourierMessage
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/MessageInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "201": { description: created }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/courier/staff/shift:
+        post:
+            operationId: staffShift
+            security: [{ bearer: [] }]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/StaffShift",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200": { description: ok }
+                "403": { $ref: "#/components/responses/Problem" }
+    /v1/courier/staff/offers:
+        get:
+            operationId: listStaffOffers
+            security: [{ bearer: [] }]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/OfferList",
+                                            },
+                                    },
+                            },
+                    }
+                "401": { $ref: "#/components/responses/Problem" }
+    /v1/courier/staff/offers/{id}/accept:
+        post:
+            operationId: acceptStaffOffer
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/DeliveryEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+                "410": { $ref: "#/components/responses/Problem" }
+    /v1/customer/orders/{id}/delivery-choice:
+        post:
+            operationId: deliveryChoice
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/DeliveryChoice",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/customer/orders/{id}/ratings:
+        post:
+            operationId: rateOrder
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/RatingInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "201": { description: created }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/customer/orders/{id}/cheers:
+        post:
+            operationId: cheerOrder
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/CheerInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "201": { description: created }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+                "429": { $ref: "#/components/responses/Problem" }
+    /v1/customer/orders/{id}/messages:
+        get:
+            operationId: listCustomerMessages
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/MessageList",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+        post:
+            operationId: postCustomerMessage
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/MessageInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "201": { description: created }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/customer/impact:
+        get:
+            operationId: customerImpact
+            security: [{ bearer: [] }]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/Impact",
+                                            },
+                                    },
+                            },
+                    }
+                "401": { $ref: "#/components/responses/Problem" }
+    /v1/admin/courier-applications:
+        get:
+            operationId: listApplications
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: status,
+                        in: query,
+                        required: false,
+                        schema: { type: string },
+                    },
+                ]
+            responses:
+                "200": { description: ok }
+                "403": { $ref: "#/components/responses/Problem" }
+    /v1/admin/courier-applications/{user_id}/approve:
+        post:
+            operationId: approveApplication
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: user_id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: false,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/DecisionInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200": { description: ok }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/admin/courier-applications/{user_id}/reject:
+        post:
+            operationId: rejectApplication
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: user_id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/DecisionInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/admin/couriers/{user_id}/sanctions:
+        get:
+            operationId: listSanctions
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: user_id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200": { description: ok }
+                "403": { $ref: "#/components/responses/Problem" }
+        post:
+            operationId: sanctionCourier
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: user_id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/SanctionInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/merchant/merchants/me:
+        get:
+            {
+                operationId: myMerchant,
+                security: [{ bearer: [] }],
+                responses: { "200": { description: ok } },
+            }
+        patch:
+            {
+                operationId: updateMerchant,
+                security: [{ bearer: [] }],
+                responses: { "200": { description: ok } },
+            }
+    /v1/merchant/merchants:
+        post:
+            {
+                operationId: createMerchant,
+                security: [{ bearer: [] }],
+                responses: { "201": { description: created } },
+            }
+    /v1/merchant/agreement/current:
+        get:
+            {
+                operationId: currentAgreement,
+                responses: { "200": { description: ok } },
+            }
+    /v1/merchant/merchants/me/agreement:
+        post:
+            {
+                operationId: signAgreement,
+                security: [{ bearer: [] }],
+                responses: { "201": { description: created } },
+            }
+    /v1/merchant/staff:
+        get:
+            {
+                operationId: listStaff,
+                security: [{ bearer: [] }],
+                responses: { "200": { description: ok } },
+            }
+    /v1/merchant/staff/invite:
+        post:
+            {
+                operationId: inviteStaff,
+                security: [{ bearer: [] }],
+                responses: { "201": { description: created } },
+            }
+    /v1/merchant/staff/{id}:
+        patch:
+            {
+                operationId: updateStaff,
+                parameters:
+                    [
+                        {
+                            name: id,
+                            in: path,
+                            required: true,
+                            schema: { type: string },
+                        },
+                    ],
+                security: [{ bearer: [] }],
+                responses: { "200": { description: ok } },
+            }
+    /v1/dev/outbox:
+        get:
+            {
+                operationId: devOutbox,
+                responses: { "200": { description: ok } },
+            }
+    /v1/customer/orders:
+        get:
+            operationId: listCustomerOrders
+            security: [{ bearer: [] }]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/OrderList",
+                                            },
+                                    },
+                            },
+                    }
+                "401": { $ref: "#/components/responses/Problem" }
+        post:
+            operationId: createOrder
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: Idempotency-Key,
+                        in: header,
+                        required: false,
+                        schema: { type: string },
+                        description: "Safe retry key; same key returns the original order, never a second charge",
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/CreateOrder",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "201":
+                    {
+                        description: created,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/OrderEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "402": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/customer/orders/{id}:
+        get:
+            operationId: getOrder
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/OrderDetail",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/customer/orders/{id}/cancel:
+        post:
+            operationId: cancelOrder
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/OrderEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/merchant/orders:
+        get:
+            operationId: listMerchantOrders
+            security: [{ bearer: [] }]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/OrderList",
+                                            },
+                                    },
+                            },
+                    }
+                "401": { $ref: "#/components/responses/Problem" }
+    /v1/merchant/orders/{id}/accept:
+        post:
+            operationId: acceptOrder
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/OrderEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/merchant/orders/{id}/reject:
+        post:
+            operationId: rejectOrder
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: false,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/RejectOrder",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/OrderEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/merchant/orders/{id}/ready:
+        post:
+            operationId: readyOrder
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/OrderEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/merchant/menu/categories:
+        get:
+            operationId: listCategories
+            security: [{ bearer: [] }]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/CategoryList",
+                                            },
+                                    },
+                            },
+                    }
+                "401": { $ref: "#/components/responses/Problem" }
+        post:
+            operationId: createCategory
+            security: [{ bearer: [] }]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/CategoryInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "201": { description: created }
+                "400": { $ref: "#/components/responses/Problem" }
+    /v1/merchant/menu/categories/{id}:
+        patch:
+            operationId: updateCategory
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/CategoryInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+        delete:
+            operationId: deleteCategory
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "204": { description: ok }
+    /v1/merchant/menu/items:
+        get:
+            operationId: listMenuItems
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: category_id,
+                        in: query,
+                        required: false,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/MenuItemList",
+                                            },
+                                    },
+                            },
+                    }
+                "401": { $ref: "#/components/responses/Problem" }
+        post:
+            operationId: createMenuItem
+            security: [{ bearer: [] }]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/MenuItemInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "201": { description: created }
+                "400": { $ref: "#/components/responses/Problem" }
+    /v1/merchant/menu/items/{id}:
+        patch:
+            operationId: updateMenuItem
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/MenuItemInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+        delete:
+            operationId: deleteMenuItem
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "204": { description: ok }
+    /v1/customer/wallet:
+        get:
+            operationId: getWallet
+            security: [{ bearer: [] }]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/Wallet",
+                                            },
+                                    },
+                            },
+                    }
+                "401": { $ref: "#/components/responses/Problem" }
+    /v1/customer/wallet/topups:
+        get:
+            operationId: listTopups
+            security: [{ bearer: [] }]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/TopupList",
+                                            },
+                                    },
+                            },
+                    }
+                "401": { $ref: "#/components/responses/Problem" }
+        post:
+            operationId: createTopup
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: Idempotency-Key,
+                        in: header,
+                        required: false,
+                        schema: { type: string },
+                        description: "Safe retry key; same key returns the original top-up, never a second charge",
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/TopupInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "201":
+                    {
+                        description: created,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/PaymentEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+                "503": { $ref: "#/components/responses/Problem" }
+    /v1/webhooks/paddle:
+        post:
+            operationId: paddleWebhook
+            description: "Paddle sandbox webhook. Auth is the Paddle-Signature HMAC header, not JWT. Card data never touches our code."
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "401": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+    /v1/courier/earnings:
+        get:
+            operationId: getEarnings
+            security: [{ bearer: [] }]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/Earnings",
+                                            },
+                                    },
+                            },
+                    }
+                "401": { $ref: "#/components/responses/Problem" }
+    /v1/courier/withdrawals:
+        get:
+            operationId: listWithdrawals
+            security: [{ bearer: [] }]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/WithdrawalList",
+                                            },
+                                    },
+                            },
+                    }
+                "401": { $ref: "#/components/responses/Problem" }
+        post:
+            operationId: createWithdrawal
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: Idempotency-Key,
+                        in: header,
+                        required: false,
+                        schema: { type: string },
+                        description: "Safe retry key; same key returns the original withdrawal, never a second payout",
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/WithdrawalInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "201":
+                    {
+                        description: created,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/WithdrawalEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "402": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/courier/deliveries/history:
+        get:
+            operationId: listDeliveryHistory
+            security: [{ bearer: [] }]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/DeliveryHistory",
+                                            },
+                                    },
+                            },
+                    }
+                "401": { $ref: "#/components/responses/Problem" }
+    /v1/admin/withdrawals:
+        get:
+            operationId: listAdminWithdrawals
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: status,
+                        in: query,
+                        required: false,
+                        schema: { type: string },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/WithdrawalList",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+    /v1/admin/withdrawals/{id}/hold:
+        post:
+            operationId: holdWithdrawal
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/HoldInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/WithdrawalEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/admin/withdrawals/{id}/release:
+        post:
+            operationId: releaseWithdrawal
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200": { description: ok }
+                "403": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/dev/payments/{id}/simulate-paid:
+        post:
+            operationId: simulatePaddlePaid
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            description: "Demo mode only: confirms a pending Paddle payment through the same apply path as the webhook."
+            responses:
+                "200": { description: ok }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/merchant/menu/import-jobs:
+        post:
+            operationId: createImportJob
+            security: [{ bearer: [] }]
+            description: "Snap-a-Menu: photo in, merchant-reviewed drafts out. Drafts never carry prices (price_minor is always null); the merchant types every price."
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/ImportJobInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "201":
+                    {
+                        description: created,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/ImportJob",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/merchant/menu/import-jobs/{id}:
+        get:
+            operationId: getImportJob
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/ImportJob",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/admin/courier-applications/{user_id}/trust-brief:
+        get:
+            operationId: getTrustBrief
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: user_id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            description: "Advisory Trust Brief (AI summarizes, the admin decides — never an auto-ban)."
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/TrustBrief",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+    /v1/courier/deliveries/{id}/proof-checks:
+        get:
+            operationId: listProofChecks
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/ProofCheckList",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+        post:
+            operationId: postProofCheck
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/ProofCheckInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "202": { description: queued }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/customer/orders/{id}/messages/translate:
+        post:
+            operationId: translateCustomerMessage
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/TranslateInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/TranslateResult",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/courier/deliveries/{id}/messages/translate:
+        post:
+            operationId: translateCourierMessage
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/TranslateInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/TranslateResult",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/courier/coach/weekly:
+        get:
+            operationId: coachWeekly
+            security: [{ bearer: [] }]
+            description: "Weekly AI Coach input data: measured stats plus a gentle plan, labeled not medical advice."
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/CoachWeekly",
+                                            },
+                                    },
+                            },
+                    }
+                "401": { $ref: "#/components/responses/Problem" }
+    /v1/courier/voice:
+        get:
+            operationId: voiceConnect
+            description: 'Voice Copilot relay (WebSocket upgrade with ?ticket= from POST /v1/ws/ticket). Binary frames: 24 kHz Int16 mono PCM. Text frames: {"type":"voice.transcript","text","lang"} and {"type":"voice.end"}. Replies: {"type":"voice.intent","intent","reply_text","offer_id","confirmation","live"}.'
+            parameters:
+                [
+                    {
+                        name: ticket,
+                        in: query,
+                        required: true,
+                        schema: { type: string },
+                    },
+                ]
+            responses:
+                "101": { description: websocket }
+                "401": { $ref: "#/components/responses/Problem" }
+    /v1/courier/voice/confirm:
+        post:
+            operationId: voiceConfirm
+            security: [{ bearer: [] }]
+            description: "Executes a voice accept proposal after verifying the signed confirmation and re-checking offer state."
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/VoiceConfirm",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/DeliveryEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+                "410": { $ref: "#/components/responses/Problem" }
+    /v1/admin/demo/state:
+        get:
+            operationId: demoState
+            security: [{ bearer: [] }]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/DemoState",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+    /v1/admin/demo/bots/start:
+        post:
+            operationId: demoBotsStart
+            security: [{ bearer: [] }]
+            description: "Demo mode only: flag the simulator loop on. Speed x1, x3, or x10."
+            requestBody:
+                {
+                    required: false,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/DemoBotsStart",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200": { description: ok }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/admin/demo/bots/stop:
+        post:
+            operationId: demoBotsStop
+            security: [{ bearer: [] }]
+            description: "Demo mode only: flag the simulator loop off."
+            responses:
+                "200": { description: ok }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/admin/demo/force-no-courier:
+        post:
+            operationId: demoForceNoCourier
+            security: [{ bearer: [] }]
+            description: "Demo mode only: skip the courier cascade so judges rehearse staff fallback and no-courier choices."
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/DemoForceNoCourier",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/admin/demo/reset:
+        post:
+            operationId: demoReset
+            security: [{ bearer: [] }]
+            description: "Demo mode only: clear runtime rows (orders, deliveries, ledger, sessions, AI) and reseed demo wallets. Merchants, menus, users, and applications stay."
+            responses:
+                "200": { description: ok }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/dev/deliveries/{id}/codes:
+        get:
+            operationId: devDeliveryCodes
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            description: "Demo mode only: handover codes for the simulator unattended loop."
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/DeliveryCodes",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+components:
+    securitySchemes: { bearer: { type: http, scheme: bearer } }
+    responses:
+        Problem:
+            {
+                description: problem,
+                content:
+                    {
+                        application/problem+json:
+                            {
+                                schema:
+                                    { $ref: "#/components/schemas/Problem" },
+                            },
+                    },
+            }
+    schemas:
+        Problem:
+            {
+                type: object,
+                properties:
+                    {
+                        type: { type: string },
+                        title: { type: string },
+                        status: { type: integer },
+                        detail: { type: string },
+                    },
+            }
+        Money:
+            {
+                type: object,
+                required: [amount_minor, currency],
+                properties:
+                    {
+                        amount_minor:
+                            {
+                                type: integer,
+                                minimum: 0,
+                                description: "Integer minor units (ISO 4217), never floats",
+                            },
+                        currency: { type: string, minLength: 3, maxLength: 3 },
+                    },
+            }
+        GeoPoint:
+            {
+                type: object,
+                required: [lat, lng],
+                properties:
+                    {
+                        lat: { type: number },
+                        lng: { type: number },
+                        note: { type: string },
+                    },
+            }
+        OrderStatus:
+            {
+                type: string,
+                enum:
+                    [
+                        awaiting_payment,
+                        placed,
+                        accepted,
+                        ready,
+                        picked_up,
+                        delivered,
+                        completed,
+                        rejected,
+                        cancelled,
+                    ],
+            }
+        OrderItemInput:
+            {
+                type: object,
+                required: [menu_item_id, qty],
+                properties:
+                    {
+                        menu_item_id: { type: string, format: uuid },
+                        qty: { type: integer, minimum: 1, maximum: 20 },
+                    },
+            }
+        CreateOrder:
+            type: object
+            required: [merchant_id, items]
+            properties:
+                merchant_id: { type: string, format: uuid }
+                items:
+                    {
+                        type: array,
+                        minItems: 1,
+                        maxItems: 20,
+                        items: { $ref: "#/components/schemas/OrderItemInput" },
+                    }
+                address_id: { type: string, format: uuid }
+                lat: { type: number }
+                lng: { type: number }
+                note: { type: string }
+                tip_minor: { type: integer, minimum: 0, default: 0 }
+                payment_method:
+                    {
+                        type: string,
+                        enum: [wallet, card],
+                        default: wallet,
+                        description: "card orders wait in awaiting_payment for the Paddle sandbox webhook",
+                    }
+        RejectOrder: { type: object, properties: { reason: { type: string } } }
+        Order:
+            type: object
+            properties:
+                id: { type: string, format: uuid }
+                code: { type: string }
+                status: { $ref: "#/components/schemas/OrderStatus" }
+                merchant_id: { type: string, format: uuid }
+                currency: { type: string }
+                subtotal: { $ref: "#/components/schemas/Money" }
+                delivery_fee: { $ref: "#/components/schemas/Money" }
+                service_fee: { $ref: "#/components/schemas/Money" }
+                tip: { $ref: "#/components/schemas/Money" }
+                total: { $ref: "#/components/schemas/Money" }
+                commission: { $ref: "#/components/schemas/Money" }
+                size_class: { type: string, enum: [S, M, L] }
+                spill_risk: { type: string, enum: [low, medium, high] }
+                payment_method: { type: string, enum: [wallet, card] }
+                payment_status:
+                    { type: string, enum: [unpaid, held, paid, refunded] }
+                dropoff: { $ref: "#/components/schemas/GeoPoint" }
+                delivery_pin:
+                    {
+                        type: string,
+                        description: "Customer handover PIN (customer view only)",
+                    }
+                pickup_code:
+                    {
+                        type: string,
+                        description: "Merchant handover code (merchant view only)",
+                    }
+                ready_at_est: { type: string, format: date-time }
+                window_start: { type: string, format: date-time }
+                window_end: { type: string, format: date-time }
+                created_at: { type: string, format: date-time }
+                delivery:
+                    {
+                        type: object,
+                        description: "Live delivery: status, eta_s, route, courier profile (order detail only)",
+                    }
+        OrderEnvelope:
+            {
+                type: object,
+                properties:
+                    {
+                        order: { $ref: "#/components/schemas/Order" },
+                        refunded: { type: boolean },
+                        payment:
+                            {
+                                $ref: "#/components/schemas/Payment",
+                                description: "Pending Paddle payment (card orders only)",
+                            },
+                    },
+            }
+        OrderList:
+            {
+                type: object,
+                properties:
+                    {
+                        orders:
+                            {
+                                type: array,
+                                items: { $ref: "#/components/schemas/Order" },
+                            },
+                    },
+            }
+        OrderDetail:
+            {
+                type: object,
+                properties: { order: { $ref: "#/components/schemas/Order" } },
+            }
+        CategoryInput:
+            {
+                type: object,
+                properties:
+                    {
+                        name:
+                            {
+                                type: object,
+                                additionalProperties: { type: string },
+                            },
+                        sort: { type: integer },
+                    },
+            }
+        CategoryList:
+            {
+                type: object,
+                properties:
+                    { categories: { type: array, items: { type: object } } },
+            }
+        MenuItemInput:
+            type: object
+            properties:
+                category_id: { type: string, format: uuid }
+                name: { type: object, additionalProperties: { type: string } }
+                description:
+                    { type: object, additionalProperties: { type: string } }
+                price_minor: { type: integer, minimum: 0 }
+                size_class: { type: string, enum: [S, M, L] }
+                spill_risk: { type: string, enum: [low, medium, high] }
+                travels_well: { type: boolean }
+                photo_url: { type: string }
+                available: { type: boolean }
+        MenuItemList:
+            {
+                type: object,
+                properties: { items: { type: array, items: { type: object } } },
+            }
+        CourierMode: { type: string, enum: [runner, biker] }
+        CourierProfileInput:
+            type: object
+            properties:
+                mode: { $ref: "#/components/schemas/CourierMode" }
+                legal_name: { type: string }
+                birth_date:
+                    {
+                        type: string,
+                        format: date,
+                        description: "YYYY-MM-DD; 18+ only",
+                    }
+                nationality: { type: string }
+                address: { type: object, additionalProperties: true }
+                emergency_contact: { type: object, additionalProperties: true }
+                phone: { type: string, description: "E.164" }
+                id_doc_type: { type: string }
+                id_number:
+                    {
+                        type: string,
+                        description: "AES-GCM sealed server-side, never returned",
+                    }
+                id_front_file_id: { type: string, format: uuid }
+                id_back_file_id: { type: string, format: uuid }
+                selfie_file_id: { type: string, format: uuid }
+                bike: { type: object, additionalProperties: true }
+                bag_liters: { type: integer, minimum: 0 }
+                consents: { type: object, additionalProperties: true }
+        CourierProfile:
+            allOf:
+                - $ref: "#/components/schemas/CourierProfileInput"
+                - type: object
+                  properties:
+                      status: { type: string }
+                      id_number_saved: { type: boolean }
+                      approved_at: { type: string, format: date-time }
+        StartSession:
+            type: object
+            properties:
+                kind:
+                    { type: string, enum: [qualification, work], default: work }
+                mode: { $ref: "#/components/schemas/CourierMode" }
+                goal_distance_m:
+                    { type: number, description: "Workout goal, meters" }
+                goal_duration_s:
+                    { type: integer, description: "Workout goal, seconds" }
+                planned_track:
+                    {
+                        type: object,
+                        description: "GeoJSON LineString, optional saved/AI track",
+                    }
+        Session:
+            type: object
+            properties:
+                id: { type: string, format: uuid }
+                kind: { type: string, enum: [qualification, work] }
+                mode: { $ref: "#/components/schemas/CourierMode" }
+                status: { type: string, enum: [active, stale, ended] }
+                started_at: { type: string, format: date-time }
+                ended_at: { type: string, format: date-time }
+                goal_distance_m: { type: number }
+                goal_duration_s: { type: integer }
+                distance_m: { type: number }
+                moving_s: { type: integer }
+                active_s: { type: integer }
+                elapsed_s: { type: integer }
+                pace_s_per_km: { type: number }
+                speed_kmh: { type: number }
+                steps: { type: integer }
+                stale: { type: boolean }
+                checkpoint_due: { type: boolean }
+                flags: { type: array, items: { type: string } }
+        SessionEnvelope:
+            type: object
+            properties:
+                session: { $ref: "#/components/schemas/Session" }
+                qualification:
+                    type: object
+                    properties:
+                        passed: { type: boolean }
+                        distance_m: { type: number }
+                        moving_s: { type: integer }
+                        elapsed_s: { type: integer }
+                        max_gap_s: { type: integer }
+                        flags: { type: array, items: { type: string } }
+                        fail_reasons: { type: array, items: { type: string } }
+                        message: { type: string }
+                        target_distance_m: { type: number }
+                        moving_limit_s: { type: integer }
+                        retry_after_s: { type: integer }
+        SessionList:
+            {
+                type: object,
+                properties:
+                    {
+                        sessions:
+                            {
+                                type: array,
+                                items: { $ref: "#/components/schemas/Session" },
+                            },
+                    },
+            }
+        LocPoint:
+            type: object
+            required: [ts, lat, lng]
+            properties:
+                ts:
+                    {
+                        type: string,
+                        format: date-time,
+                        description: "Phone timestamp, ISO-8601 UTC, forward-only",
+                    }
+                lat: { type: number }
+                lng: { type: number }
+                acc:
+                    {
+                        type: number,
+                        description: "GPS accuracy, meters; over 30 m is skipped",
+                    }
+                heading: { type: number }
+                altitude_m: { type: number }
+                steps_delta: { type: integer }
+        LocBatch:
+            type: object
+            required: [session_id, points]
+            properties:
+                session_id: { type: string, format: uuid }
+                points:
+                    {
+                        type: array,
+                        minItems: 1,
+                        maxItems: 500,
+                        items: { $ref: "#/components/schemas/LocPoint" },
+                    }
+        LocAck:
+            type: object
+            properties:
+                accepted: { type: integer }
+                skipped: { type: object }
+                server_time: { type: string, format: date-time }
+                checkpoint_due: { type: boolean }
+                session: { $ref: "#/components/schemas/Session" }
+        CheckpointInput:
+            type: object
+            required: [file_id]
+            properties:
+                file_id:
+                    {
+                        type: string,
+                        format: uuid,
+                        description: "Finished private-bucket upload",
+                    }
+        CourierStats:
+            type: object
+            properties:
+                lifetime: { type: object }
+                weekly:
+                    {
+                        type: object,
+                        description: "active_s vs WHO 150 min goal",
+                    }
+        DecisionInput:
+            type: object
+            properties:
+                reason:
+                    {
+                        type: string,
+                        description: "Required for reject; audit-logged",
+                    }
+                note: { type: string }
+        SanctionInput:
+            type: object
+            required: [kind, reason_code]
+            properties:
+                kind: { type: string, enum: [freeze, unfreeze, ban] }
+                reason_code: { type: string }
+                note: { type: string }
+                ends_at: { type: string, format: date-time }
+        DeliveryStatus:
+            {
+                type: string,
+                enum:
+                    [
+                        searching,
+                        offered,
+                        assigned,
+                        at_pickup,
+                        picked_up,
+                        at_dropoff,
+                        delivered,
+                        staff_searching,
+                        no_courier,
+                        cancelled,
+                    ],
+            }
+        Offer:
+            type: object
+            properties:
+                id: { type: string, format: uuid }
+                delivery_id: { type: string, format: uuid }
+                kind: { type: string, enum: [directed, broadcast, staff] }
+                status:
+                    {
+                        type: string,
+                        enum: [pending, accepted, declined, expired],
+                    }
+                expires_at: { type: string, format: date-time }
+                seconds_left:
+                    { type: integer, description: "Seconds until expiry" }
+                order:
+                    type: object
+                    properties:
+                        merchant_name: { type: string }
+                        to_pickup_m:
+                            {
+                                type: number,
+                                description: "Meters courier to restaurant",
+                            }
+                        trip_m:
+                            {
+                                type: number,
+                                description: "Meters restaurant to customer",
+                            }
+                        payout_minor:
+                            {
+                                type: integer,
+                                description: "Courier payout, minor units",
+                            }
+                        currency: { type: string }
+                        size_class: { type: string, enum: [S, M, L] }
+                        spill_risk: { type: string, enum: [low, medium, high] }
+                        ready_at_est: { type: string, format: date-time }
+                        window_end: { type: string, format: date-time }
+        OfferList:
+            {
+                type: object,
+                properties:
+                    {
+                        offers:
+                            {
+                                type: array,
+                                items: { $ref: "#/components/schemas/Offer" },
+                            },
+                    },
+            }
+        Delivery:
+            type: object
+            properties:
+                id: { type: string, format: uuid }
+                order_id: { type: string, format: uuid }
+                type: { type: string, enum: [workout, staff] }
+                status: { $ref: "#/components/schemas/DeliveryStatus" }
+                order_status: { $ref: "#/components/schemas/OrderStatus" }
+                currency: { type: string }
+                pickup:
+                    type: object
+                    properties:
+                        merchant_name: { type: string }
+                        lat: { type: number }
+                        lng: { type: number }
+                        note: { type: string }
+                        address: { type: string }
+                dropoff: { $ref: "#/components/schemas/GeoPoint" }
+                eta_s: { type: integer, description: "Seconds to next stop" }
+                route_polyline:
+                    {
+                        type: string,
+                        description: "Encoded polyline, empty when estimated",
+                    }
+                route_warning:
+                    {
+                        type: string,
+                        description: "Required beta disclaimer for WALK/BICYCLE routes",
+                    }
+                size_class: { type: string, enum: [S, M, L] }
+                spill_risk: { type: string, enum: [low, medium, high] }
+                ready_at_est: { type: string, format: date-time }
+                window_end: { type: string, format: date-time }
+                nudged: { type: boolean }
+                assigned_at: { type: string, format: date-time }
+        DeliveryEnvelope:
+            type: object
+            properties:
+                delivery: { $ref: "#/components/schemas/Delivery" }
+                impact:
+                    type: object
+                    properties:
+                        distance_m: { type: number }
+                        active_s: { type: integer }
+                payout: { $ref: "#/components/schemas/Money" }
+        ArrivedInput:
+            type: object
+            required: [at]
+            properties:
+                at: { type: string, enum: [pickup, dropoff] }
+        PickupInput:
+            type: object
+            required: [pickup_code]
+            properties:
+                pickup_code:
+                    {
+                        type: string,
+                        description: "Code shown on the merchant screen",
+                    }
+        DeliveredInput:
+            type: object
+            properties:
+                pin: { type: string, description: "Customer 4-digit PIN" }
+                proof_file_id:
+                    {
+                        type: string,
+                        format: uuid,
+                        description: "Handover photo instead of PIN",
+                    }
+        StaffShift:
+            type: object
+            required: [merchant_id, on_shift]
+            properties:
+                merchant_id: { type: string, format: uuid }
+                on_shift: { type: boolean }
+        DeliveryChoice:
+            type: object
+            required: [choice]
+            properties:
+                choice:
+                    {
+                        type: string,
+                        enum: [wait_more, pickup, cancel],
+                        description: "wait_more re-searches, pickup cancels delivery only, cancel refunds in full",
+                    }
+        RatingInput:
+            type: object
+            properties:
+                courier_stars: { type: integer, minimum: 1, maximum: 5 }
+                courier_tags:
+                    {
+                        type: array,
+                        maxItems: 5,
+                        items: { type: string, maxLength: 40 },
+                    }
+                restaurant_stars: { type: integer, minimum: 1, maximum: 5 }
+        CheerInput:
+            type: object
+            required: [message]
+            properties:
+                message: { type: string, minLength: 1, maxLength: 140 }
+        MessageInput:
+            type: object
+            required: [body]
+            properties:
+                body: { type: string, minLength: 1, maxLength: 500 }
+                lang:
+                    {
+                        type: string,
+                        description: "BCP-47 sender language, optional",
+                    }
+        Message:
+            type: object
+            properties:
+                id: { type: string, format: uuid }
+                sender: { type: string, enum: [customer, courier] }
+                body: { type: string }
+                lang: { type: string }
+                translated_body: { type: string }
+                created_at: { type: string, format: date-time }
+        MessageList:
+            {
+                type: object,
+                properties:
+                    {
+                        messages:
+                            {
+                                type: array,
+                                items: { $ref: "#/components/schemas/Message" },
+                            },
+                    },
+            }
+        Impact:
+            type: object
+            properties:
+                orders_delivered: { type: integer }
+                couriers_supported: { type: integer }
+                distance_m:
+                    {
+                        type: number,
+                        description: "Measured workout distance, meters",
+                    }
+                active_s:
+                    {
+                        type: integer,
+                        description: "Measured active time, seconds",
+                    }
+                recent:
+                    type: array
+                    items:
+                        type: object
+                        properties:
+                            order_code: { type: string }
+                            courier_first_name: { type: string }
+                            distance_m: { type: number }
+                            active_s: { type: integer }
+                            delivered_at: { type: string, format: date-time }
+        Wallet:
+            type: object
+            properties:
+                wallets:
+                    type: array
+                    items:
+                        type: object
+                        properties:
+                            balance: { $ref: "#/components/schemas/Money" }
+        TopupInput:
+            type: object
+            required: [amount_minor, currency]
+            properties:
+                amount_minor:
+                    {
+                        type: integer,
+                        minimum: 1,
+                        description: "Top-up amount, minor units",
+                    }
+                currency: { type: string, minLength: 3, maxLength: 3 }
+        Payment:
+            type: object
+            properties:
+                id: { type: string, format: uuid }
+                kind: { type: string, enum: [topup, order] }
+                status:
+                    {
+                        type: string,
+                        enum: [pending, paid, failed, refunded, cancelled],
+                    }
+                amount: { $ref: "#/components/schemas/Money" }
+                order_id: { type: string, format: uuid }
+                sandbox_note: { type: string }
+                created_at: { type: string, format: date-time }
+        PaymentEnvelope:
+            {
+                type: object,
+                properties:
+                    {
+                        payment: { $ref: "#/components/schemas/Payment" },
+                        order: { $ref: "#/components/schemas/Order" },
+                    },
+            }
+        TopupList:
+            {
+                type: object,
+                properties:
+                    {
+                        topups:
+                            {
+                                type: array,
+                                items: { $ref: "#/components/schemas/Payment" },
+                            },
+                    },
+            }
+        WithdrawalInput:
+            type: object
+            required: [amount_minor, currency]
+            properties:
+                amount_minor:
+                    {
+                        type: integer,
+                        minimum: 1,
+                        description: "Payout amount, minor units",
+                    }
+                currency: { type: string, minLength: 3, maxLength: 3 }
+        Withdrawal:
+            type: object
+            properties:
+                id: { type: string, format: uuid }
+                courier_id: { type: string, format: uuid }
+                status:
+                    {
+                        type: string,
+                        enum:
+                            [
+                                pending,
+                                processing,
+                                paid,
+                                failed,
+                                held,
+                                cancelled,
+                            ],
+                    }
+                amount: { $ref: "#/components/schemas/Money" }
+                hold_reason: { type: string }
+                failure_reason: { type: string }
+                payout_ref: { type: string }
+                created_at: { type: string, format: date-time }
+        WithdrawalEnvelope:
+            {
+                type: object,
+                properties:
+                    { withdrawal: { $ref: "#/components/schemas/Withdrawal" } },
+            }
+        WithdrawalList:
+            {
+                type: object,
+                properties:
+                    {
+                        withdrawals:
+                            {
+                                type: array,
+                                items:
+                                    { $ref: "#/components/schemas/Withdrawal" },
+                            },
+                    },
+            }
+        HoldInput:
+            type: object
+            required: [reason]
+            properties:
+                reason: { type: string }
+        Earnings:
+            type: object
+            properties:
+                earnings:
+                    type: array
+                    items:
+                        type: object
+                        properties:
+                            currency: { type: string }
+                            balance: { $ref: "#/components/schemas/Money" }
+                            lifetime_earned:
+                                { $ref: "#/components/schemas/Money" }
+                            reserved: { $ref: "#/components/schemas/Money" }
+                            withdrawable: { $ref: "#/components/schemas/Money" }
+        DeliveryHistory:
+            type: object
+            properties:
+                deliveries:
+                    type: array
+                    items:
+                        type: object
+                        properties:
+                            delivery_id: { type: string, format: uuid }
+                            type: { type: string, enum: [workout, staff] }
+                            order_code: { type: string }
+                            payout: { $ref: "#/components/schemas/Money" }
+                            merchant_name: { type: string }
+                            distance_m: { type: number }
+                            active_s: { type: integer }
+                            courier_stars:
+                                { type: integer, minimum: 1, maximum: 5 }
+                            delivered_at: { type: string, format: date-time }
+        ImportJobInput:
+            {
+                type: object,
+                required: [file_id],
+                properties:
+                    {
+                        file_id:
+                            {
+                                type: string,
+                                format: uuid,
+                                description: "Ready menu photo from POST /v1/files/presign",
+                            },
+                    },
+            }
+        CropBox:
+            {
+                type: object,
+                properties:
+                    {
+                        x: { type: number },
+                        y: { type: number },
+                        width: { type: number },
+                        height: { type: number },
+                    },
+            }
+        ImportDraft:
+            type: object
+            properties:
+                name: { type: object, additionalProperties: { type: string } }
+                description:
+                    { type: object, additionalProperties: { type: string } }
+                price_minor:
+                    {
+                        type: integer,
+                        nullable: true,
+                        description: "Always null: AI never sets prices; the merchant types every price",
+                    }
+                price_unreadable: { type: boolean }
+                size_class: { type: string, enum: [S, M, L] }
+                spill_risk: { type: string, enum: [low, medium, high] }
+                travels_well: { type: boolean }
+                category_hint: { type: string }
+                confident: { type: boolean }
+                crop_box: { $ref: "#/components/schemas/CropBox" }
+        ImportJob:
+            type: object
+            properties:
+                id: { type: string, format: uuid }
+                status:
+                    {
+                        type: string,
+                        enum:
+                            [
+                                queued,
+                                uploading,
+                                analyzing,
+                                needs_review,
+                                done,
+                                failed,
+                            ],
+                    }
+                progress: { type: integer, minimum: 0, maximum: 100 }
+                photo_url: { type: string }
+                drafts:
+                    {
+                        type: array,
+                        items: { $ref: "#/components/schemas/ImportDraft" },
+                    }
+                error: { type: string }
+                prices_checked: { type: boolean }
+                created_at: { type: string, format: date-time }
+                updated_at: { type: string, format: date-time }
+        TrustBrief:
+            type: object
+            properties:
+                user_id: { type: string, format: uuid }
+                risk: { type: string, enum: [low, medium, high] }
+                advisory:
+                    {
+                        type: boolean,
+                        description: "Always true: the admin decides, never an auto-ban",
+                    }
+                summary: { type: string }
+                reasons: { type: array, items: { type: string } }
+                photo_note: { type: string }
+                fallback: { type: boolean }
+                pending:
+                    {
+                        type: boolean,
+                        description: "True while the brief worker is still running",
+                    }
+                created_at: { type: string, format: date-time }
+        ProofCheckInput:
+            {
+                type: object,
+                required: [file_id],
+                properties: { file_id: { type: string, format: uuid } },
+            }
+        ProofCheck:
+            type: object
+            properties:
+                file_id: { type: string, format: uuid }
+                verdict: { type: string, enum: [ok, unclear, missing_item] }
+                note: { type: string }
+                fallback: { type: boolean }
+                created_at: { type: string, format: date-time }
+        ProofCheckList:
+            {
+                type: object,
+                properties:
+                    {
+                        checks:
+                            {
+                                type: array,
+                                items:
+                                    { $ref: "#/components/schemas/ProofCheck" },
+                            },
+                    },
+            }
+        TranslateInput:
+            {
+                type: object,
+                required: [message_id],
+                properties:
+                    {
+                        message_id: { type: string, format: uuid },
+                        to: { type: string, enum: [en, id, ms], default: en },
+                    },
+            }
+        TranslateResult:
+            {
+                type: object,
+                properties:
+                    {
+                        translated_body: { type: string },
+                        moderated: { type: boolean },
+                        flagged: { type: boolean },
+                        live: { type: boolean },
+                    },
+            }
+        CoachWeekly:
+            type: object
+            properties:
+                distance_m: { type: number, description: "Meters, last 7 days" }
+                active_s: { type: integer, description: "Seconds, last 7 days" }
+                active_min: { type: integer }
+                who_goal_min: { type: integer }
+                sessions: { type: integer }
+                deliveries: { type: integer }
+                earned: { $ref: "#/components/schemas/Money" }
+                headline: { type: string }
+                body: { type: string }
+                next_plan: { type: string }
+                advice_label:
+                    { type: string, description: 'Always "not medical advice"' }
+                live: { type: boolean }
+        VoiceConfirm:
+            {
+                type: object,
+                required: [offer_id, confirmation],
+                properties:
+                    {
+                        offer_id: { type: string, format: uuid },
+                        confirmation:
+                            {
+                                type: string,
+                                description: "Signed proposal from the voice relay",
+                            },
+                    },
+            }
+        DemoState:
+            {
+                type: object,
+                properties:
+                    {
+                        force_no_courier: { type: boolean },
+                        bots_running: { type: boolean },
+                        bot_speed: { type: string, enum: [x1, x3, x10] },
+                    },
+            }
+        DemoBotsStart:
+            {
+                type: object,
+                properties:
+                    {
+                        speed:
+                            { type: string, enum: [x1, x3, x10], default: x1 },
+                    },
+            }
+        DemoForceNoCourier:
+            {
+                type: object,
+                required: [enabled],
+                properties: { enabled: { type: boolean } },
+            }
+        DeliveryCodes:
+            {
+                type: object,
+                properties:
+                    {
+                        pickup_code: { type: string },
+                        delivery_pin: { type: string },
+                    },
+            }

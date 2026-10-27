@@ -1,0 +1,74 @@
+# Trackfud defaults (Milestone B0+B1). Env vars override: TB_<SECTION>_<KEY> or explicit vars in internal/config.
+server:
+    addr: ":8080"
+    demo_mode: true
+    public_base_url: "http://localhost:8000"
+auth:
+    access_ttl_seconds: 900
+    refresh_ttl_seconds: 2592000
+order:
+    merchant_accept_window_s: 180
+    window_min_minutes: 30
+    window_max_minutes: 60
+fitness:
+    runner_distance_m: 2000
+    runner_moving_limit_s: 900
+    biker_distance_m: 5000
+    biker_moving_limit_s: 1200
+    elapsed_cap_multiplier: 2
+qualification:
+    retry_after_s: 3600
+    max_attempts_per_week: 3
+    max_gap_s: 60
+    checkpoint_photos: 1
+tracking:
+    max_accuracy_m: 30
+    runner_max_speed_kmh: 25
+    biker_max_speed_kmh: 50
+    min_moving_speed_mps: 0.5
+    segment_max_gap_s: 30
+    runner_active_min_speed_kmh: 5
+    biker_active_min_speed_kmh: 10
+    stale_after_s: 60
+    auto_end_after_s: 600
+    future_tolerance_s: 30
+    clock_skew_flag_s: 30
+dispatch:
+    runner_corridor_m: 400
+    biker_corridor_m: 800
+    runner_max_to_pickup_m: 1500
+    biker_max_to_pickup_m: 3000
+    runner_max_trip_m: 3000
+    biker_max_trip_m: 7000
+    runner_sizes: [S, M]
+    biker_sizes: [S, M, L]
+    runner_spill: [low]
+    biker_spill: [low, medium]
+    runner_plan_kmh: 9
+    biker_plan_kmh: 16
+    circuity: 1.3
+    offer_window_s: 30
+    broadcast_window_s: 60
+    cascade_size: 3
+    merchant_accept_window_s: 180
+    courier_search_s: 240
+    staff_search_s: 180
+    runner_max_carry_s: 1500
+    biker_max_carry_s: 1800
+    w_fit: 1.5
+    w_food_wait: 1.0
+    w_rating: 0.6
+    w_idle: 0.2
+    heading_penalty: 0.5
+    detour_refresh_m: 150
+fees:
+    restaurant_commission_bps: 1000
+    restaurant_commission_own_staff_bps: 500
+    customer_service_fee_bps: 300
+    courier_delivery_fee_share_bps: 9500
+health:
+    who_weekly_active_min: 150
+    daily_active_cap_min: 180
+payments:
+    provider: paddle_sandbox
+    sandbox_only: true
