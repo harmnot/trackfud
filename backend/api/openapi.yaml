@@ -156,6 +156,8 @@ paths:
                             required: true,
                             schema: { type: string },
                         },
+                        { name: lat, in: query, schema: { type: number } },
+                        { name: lng, in: query, schema: { type: number } },
                     ],
                 responses: { "200": { description: ok } },
             }
@@ -179,14 +181,149 @@ paths:
             {
                 operationId: listAddresses,
                 security: [{ bearer: [] }],
-                responses: { "200": { description: ok } },
+                responses:
+                    {
+                        "200":
+                            {
+                                description: ok,
+                                content:
+                                    {
+                                        application/json:
+                                            {
+                                                schema:
+                                                    {
+                                                        $ref: "#/components/schemas/CustomerAddressList",
+                                                    },
+                                            },
+                                    },
+                            },
+                    },
             }
         post:
             {
                 operationId: createAddress,
                 security: [{ bearer: [] }],
-                responses: { "201": { description: created } },
+                requestBody:
+                    {
+                        required: true,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/CustomerAddressInput",
+                                            },
+                                    },
+                            },
+                    },
+                responses:
+                    {
+                        "201":
+                            {
+                                description: created,
+                                content:
+                                    {
+                                        application/json:
+                                            {
+                                                schema:
+                                                    {
+                                                        $ref: "#/components/schemas/CustomerAddress",
+                                                    },
+                                            },
+                                    },
+                            },
+                        "400": { $ref: "#/components/responses/Problem" },
+                    },
             }
+    /v1/customer/addresses/{id}:
+        patch:
+            operationId: updateAddress
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/CustomerAddressInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/CustomerAddress",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+        delete:
+            operationId: deleteAddress
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200": { description: ok }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/customer/addresses/{id}/default:
+        post:
+            operationId: setDefaultAddress
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/CustomerAddress",
+                                            },
+                                    },
+                            },
+                    }
+                "404": { $ref: "#/components/responses/Problem" }
     /v1/courier/application:
         get:
             {
@@ -803,6 +940,26 @@ paths:
             responses:
                 "200": { description: ok }
                 "403": { $ref: "#/components/responses/Problem" }
+    /v1/courier/staff/memberships:
+        get:
+            operationId: listMemberships
+            security: [{ bearer: [] }]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/StaffMembershipList",
+                                            },
+                                    },
+                            },
+                    }
+                "401": { $ref: "#/components/responses/Problem" }
     /v1/courier/staff/offers:
         get:
             operationId: listStaffOffers
@@ -1052,6 +1209,130 @@ paths:
             responses:
                 "200": { description: ok }
                 "403": { $ref: "#/components/responses/Problem" }
+    /v1/admin/courier-applications/{user_id}:
+        get:
+            operationId: getApplicationDetail
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: user_id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/admin/merchants:
+        get:
+            operationId: listMerchants
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: status,
+                        in: query,
+                        required: false,
+                        schema: { type: string, enum: [pending, approved, rejected] },
+                    },
+                    {
+                        name: limit,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, maximum: 100, default: 50 },
+                    },
+                ]
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+    /v1/admin/merchants/{id}:
+        get:
+            operationId: getMerchantDetail
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/admin/merchants/{id}/approve:
+        post:
+            operationId: approveMerchant
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: false,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/DecisionInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200": { description: ok }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/admin/merchants/{id}/reject:
+        post:
+            operationId: rejectMerchant
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/DecisionInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
     /v1/admin/courier-applications/{user_id}/approve:
         post:
             operationId: approveApplication
@@ -2525,6 +2806,7 @@ components:
                 code: { type: string }
                 status: { $ref: "#/components/schemas/OrderStatus" }
                 merchant_id: { type: string, format: uuid }
+                merchant_name: { type: string }
                 currency: { type: string }
                 subtotal: { $ref: "#/components/schemas/Money" }
                 delivery_fee: { $ref: "#/components/schemas/Money" }
@@ -2624,6 +2906,37 @@ components:
             {
                 type: object,
                 properties: { items: { type: array, items: { type: object } } },
+            }
+        CustomerAddressInput:
+            type: object
+            required: [label, lat, lng]
+            properties:
+                label: { type: string, minLength: 1, maxLength: 60 }
+                address: { type: string, maxLength: 500 }
+                lat: { type: number, minimum: -90, maximum: 90 }
+                lng: { type: number, minimum: -180, maximum: 180 }
+                note: { type: string, maxLength: 500 }
+                is_default: { type: boolean }
+        CustomerAddress:
+            allOf:
+                - $ref: "#/components/schemas/CustomerAddressInput"
+                - type: object
+                  properties:
+                      id: { type: string, format: uuid }
+                      created_at: { type: string, format: date-time }
+                      updated_at: { type: string, format: date-time }
+        CustomerAddressList:
+            {
+                type: object,
+                properties:
+                    {
+                        addresses:
+                            {
+                                type: array,
+                                items:
+                                    { $ref: "#/components/schemas/CustomerAddress" },
+                            },
+                    },
             }
         CourierMode: { type: string, enum: [runner, biker] }
         CourierProfileInput:
@@ -2945,6 +3258,22 @@ components:
             properties:
                 merchant_id: { type: string, format: uuid }
                 on_shift: { type: boolean }
+        StaffMembership:
+            type: object
+            required: [merchant_id, merchant_name, can_deliver, on_shift, status]
+            properties:
+                merchant_id: { type: string, format: uuid }
+                merchant_name: { type: string }
+                can_deliver: { type: boolean }
+                on_shift: { type: boolean }
+                status: { type: string, enum: [invited, active] }
+        StaffMembershipList:
+            type: object
+            required: [memberships]
+            properties:
+                memberships:
+                    type: array
+                    items: { $ref: "#/components/schemas/StaffMembership" }
         DeliveryChoice:
             type: object
             required: [choice]

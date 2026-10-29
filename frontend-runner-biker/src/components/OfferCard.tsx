@@ -20,8 +20,9 @@ type Props = {
 
 /** Offer card overlay. Timer is informative only — no rush while moving. */
 export function OfferCard(props: Props) {
+  const urgent = props.secondsLeft <= 10;
   return (
-    <section className="tb-offer" role="alertdialog" aria-label={props.offer.merchantName} aria-live="assertive">
+    <section className={`tb-offer${urgent ? ' tb-offer-urgent' : ''}`} role="alertdialog" aria-label={props.offer.merchantName} aria-live="assertive">
       <div className="tb-offer-top">
         <span className="tb-badge">{props.offer.mode === 'biker' ? '🚲' : '🏃'} {props.offer.merchantName}</span>
         {props.offer.demo && <span className="tb-badge tb-badge-sun">{props.demoLabel}</span>}
@@ -39,7 +40,7 @@ export function OfferCard(props: Props) {
         {props.offer.sizeClass} · {props.offer.spillRisk} spill · 30–60 min promise
       </p>
       <progress
-        className="tb-offer-timer"
+        className={`tb-offer-timer${props.secondsLeft <= 10 ? ' tb-offer-timer-low' : ''}`}
         max={OFFER_WINDOW_S}
         value={props.secondsLeft}
         aria-label={props.expiryLabel(props.secondsLeft)}

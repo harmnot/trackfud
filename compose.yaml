@@ -1,69 +1,103 @@
+# Trackfud compose — all runtime config comes from dotenv files, not hardcoded constants.
+# - Backend runtime env: ./backend/.env via env_file (see backend/.env.example).
+#   DATABASE_URL / TF_SMTP_HOST are remapped to container hostnames (db / mailpit)
+#   while all other TF_* values are taken verbatim from the env file.
+# - Frontend build-time env (VITE_*): each app's own ./frontend-*/.env is copied
+#   into the build context (Containerfile COPY . .) and Vite embeds it at
+#   `pnpm build` time. No VITE_* value is hardcoded here; to override from a
+#   root .env or shell export add build.args (e.g. VITE_API_BASE) to that
+#   frontend's build section — the Containerfile's ARG will pick it up, else
+#   it falls back to the app's .env file.
 services:
   db:
-    container_name: tb-db
+    container_name: tf-db
     image: docker.io/postgis/postgis:18-3.6
+    env_file:
+      - ./backend/.env
     environment:
-      POSTGRES_USER: Trackfud
-      POSTGRES_PASSWORD: Trackfud
-      POSTGRES_DB: Trackfud
+      POSTGRES_USER: ${POSTGRES_USER:-Trackfud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Trackfud}
+      POSTGRES_DB: ${POSTGRES_DB:-Trackfud}
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
-      - tb_pgdata:/var/lib/postgresql
+      - tf_pgdata:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U Trackfud"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-Trackfud}"]
       interval: 3s
       timeout: 3s
       retries: 20
+
   mailpit:
-    container_name: tb-mailpit
+    container_name: tf-mailpit
     image: docker.io/axllent/mailpit:latest
     ports:
-      - "8025:8025"
-      - "1025:1025"
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+
   backend:
-    container_name: tb-backend
+    container_name: tf-backend
     build:
       context: ./backend
       dockerfile: Containerfile
+    env_file:
+      - ./backend/.env
     environment:
-      DATABASE_URL: postgres://Trackfud:Trackfud@db:5432/Trackfud?sslmode=disable
-      TB_JWT_SECRET: dev-only-change-me-32chars-minimum!!
-      TB_SMTP_HOST: mailpit
-      TB_DEMO_MODE: "true"
+      # Remap localhost/127.0.0.1 to the compose service name so the backend
+      # can reach Postgres/Mailpit inside the default network. Credentials
+      # themselves still come from env (POSTGRES_* / TF_*), not hardcoded.
+      DATABASE_URL: postgres://${POSTGRES_USER:-Trackfud}:${POSTGRES_PASSWORD:-Trackfud}@db:5432/${POSTGRES_DB:-Trackfud}?sslmode=disable
+      TF_SMTP_HOST: ${TF_SMTP_HOST:-mailpit}
+      TF_SMTP_PORT: ${TF_SMTP_PORT:-1025}
+      # Force container absolute paths — overrides relative values from backend/.env
+      TF_UPLOAD_DIR: /data/uploads
+      TF_CONFIG: /app/config.yaml
+      TF_MIGRATIONS_DIR: /app/db/migrations
     volumes:
-      - tb_uploads:/data/uploads
+      - tf_uploads:/data/uploads
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "8081:8080"
+      - "${BACKEND_PORT:-8081}:8080"
+
+  back-office:
+    container_name: tf-back-office
+    build:
+      context: ./frontend-cms-admin
+      dockerfile: Containerfile
+    depends_on: [backend]
+
   customer:
-    container_name: tb-customer
+    container_name: tf-customer
     build:
       context: ./frontend-customer
       dockerfile: Containerfile
     depends_on: [backend]
+
   courier:
-    container_name: tb-courier
+    container_name: tf-courier
     build:
       context: ./frontend-runner-biker
       dockerfile: Containerfile
     depends_on: [backend]
+
   merchant:
-    container_name: tb-merchant
+    container_name: tf-merchant
     build:
       context: ./frontend-merchant
       dockerfile: Containerfile
     depends_on: [backend]
+
   gateway:
-    container_name: tb-gateway
+    container_name: tf-gateway
     image: docker.io/library/caddy:2
     ports:
-      - "8000:80"
+      - "${GATEWAY_PORT:-8000}:80"
     volumes:
       - ./gateway/Caddyfile:/etc/caddy/Caddyfile:ro
-    depends_on: [backend, customer, courier, merchant]
+    depends_on: [backend, back-office, customer, courier, merchant]
+
 volumes:
-  tb_pgdata:
-  tb_uploads:
+  tf_pgdata:
+  tf_uploads:

@@ -55,7 +55,9 @@
     "canDeliver": "Bisa mengantar (cadangan)",
     "onShift": "Sedang shift",
     "send": "Kirim undangan",
-    "sent": "Undangan terkirim ✓"
+    "sent": "Undangan terkirim ✓",
+    "howJoin": "Cara rekan bergabung",
+    "howJoinBody": "Mereka daftar di aplikasi Stride & Earn dengan email yang sama dengan yang kamu undang, buka Staff mode, pilih toko ini, dan mulai shift. Undangan via email — tidak ada kode."
   },
   "status": {
     "title": "Status toko",
@@ -176,9 +178,9 @@
     "ready": "Tandai siap",
     "readyBadge": "SIAP",
     "pickupCode": "Kode ambil",
-    "showCode": "Tunjukkan kode ini ke kurir",
+    "showCode": "Tunjukkan kode ini ke runner atau biker",
     "courierSearching": "Mencari pelari atau pesepeda…",
-    "courierNotified": "Kurir diberi tahu — segera datang",
+    "courierNotified": "Runner/biker diberi tahu — segera datang",
     "courierHanded": "Diserahkan",
     "courierEta": "· {min} mnt lagi",
     "courierStaff": "Fallback staf berjalan — rekan tim masih bisa menerima",

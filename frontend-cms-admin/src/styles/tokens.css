@@ -1,0 +1,33 @@
+:root {
+  color-scheme: dark;
+  --tb-bg: #060709;
+  --tb-surface: rgba(255, 255, 255, 0.032);
+  --tb-raised: rgba(255, 255, 255, 0.058);
+  --tb-hover: rgba(255, 255, 255, 0.085);
+  --tb-ink: #f4f4f5;
+  --tb-muted: #a1a1aa;
+  --tb-faint: #63636b;
+  --tb-line: rgba(255, 255, 255, 0.1);
+  --tb-soft-line: rgba(255, 255, 255, 0.06);
+  --tb-accent: #fafafa;
+  --tb-accent-ink: #09090b;
+  --tb-accent-soft: rgba(255, 255, 255, 0.07);
+  --tb-good: #34d399;
+  --tb-good-soft: rgba(52, 211, 153, 0.12);
+  --tb-warn: #fbbf24;
+  --tb-warn-soft: rgba(251, 191, 36, 0.12);
+  --tb-danger: #fb7185;
+  --tb-danger-bg: rgba(251, 113, 133, 0.12);
+  --tb-link: #93c5fd;
+  --tb-r-xl: 22px;
+  --tb-r-lg: 16px;
+  --tb-r-md: 12px;
+  --tb-r-pill: 999px;
+  --tb-sh-card: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 20px 50px rgba(0, 0, 0, 0.5);
+  --tb-sh-pop: 0 0 0 1px var(--tb-line), 0 24px 70px rgba(0, 0, 0, 0.7);
+  --tb-sh-btn: 0 1px 0 rgba(255, 255, 255, 0.4) inset, 0 -1px 0 rgba(0, 0, 0, 0.2) inset, 0 8px 24px rgba(255, 255, 255, 0.08);
+  --tb-font: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --tb-serif: "Newsreader", Georgia, "Times New Roman", serif;
+  --tb-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --tb-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}

@@ -20,7 +20,7 @@ export type RatingsSummary = {
   demo: boolean;
 };
 
-/** Offline sample (labelled as such) only when the history call fails. */
+/** Realistic sample for unit tests only — never rendered as live data. */
 export const DEMO_RATINGS: RatingsSummary = {
   average: 4.9,
   count: 37,

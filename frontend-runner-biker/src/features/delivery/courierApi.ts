@@ -282,9 +282,27 @@ export async function confirmVoiceAccept(args: { offerId: string; confirmation: 
   });
 }
 
+/** One roster row from `GET /courier/staff/memberships` (openapi `listMemberships`). */
+export type StaffMembership = {
+  merchant_id: string;
+  merchant_name: string;
+  can_deliver: boolean;
+  on_shift: boolean;
+  status: string;
+};
+
 /**
- * Clock a staff member on/off shift. `merchantId` comes from the merchant
- * that invited them (openapi `staffShift`).
+ * Restaurants where this account's email is on the staff roster
+ * (openapi `listMemberships`). The merchant invites by email; no codes.
+ */
+export async function fetchMemberships(): Promise<StaffMembership[]> {
+  const res = await api<{ memberships: StaffMembership[] }>('/courier/staff/memberships');
+  return res.memberships ?? [];
+}
+
+/**
+ * Clock a staff member on/off shift. `merchantId` comes from
+ * `fetchMemberships` (openapi `staffShift`).
  */
 export async function setStaffShift(args: { merchantId: string; onShift: boolean }): Promise<void> {
   await api('/courier/staff/shift', {

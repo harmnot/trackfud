@@ -84,9 +84,16 @@ export function LiveMap(args: {
   }, [args.courier, args.dropoff, args.pickup, target]);
 
   const d = routePath(pickupPt, dropPt);
+  const gridLines = (() => {
+    const lines = [];
+    for (let x = 20; x < W; x += 40) lines.push(<line key={`v${x}`} x1={x} y1={0} x2={x} y2={H} className="tb-map-grid" />);
+    for (let y = 20; y < H; y += 40) lines.push(<line key={`h${y}`} x1={0} y1={y} x2={W} y2={y} className="tb-map-grid" />);
+    return lines;
+  })();
   return (
     <figure className="tb-map" aria-label={`Live delivery map: ${args.statusText}`}>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-hidden="true">
+        {gridLines}
         <path d={d} className="tb-map-route-bg" />
         <path d={d} className="tb-map-route" ref={pathRef} />
         <g className="tb-map-pin">
@@ -98,6 +105,7 @@ export function LiveMap(args: {
           <text x={dropPt.x} y={dropPt.y + 4}>⌂</text>
         </g>
         <g className="tb-map-courier" style={{ transform: `translate(${dot.x}px, ${dot.y}px)` }}>
+          <circle r="13" className="tb-map-courier-halo" />
           <circle r="13" />
           <text y={5}>●</text>
         </g>

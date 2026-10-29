@@ -18,7 +18,7 @@ func TestLoadQualificationTrackingHealth(t *testing.T) {
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("TB_CONFIG", p)
+	t.Setenv("TF_CONFIG", p)
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestLoadQualificationTrackingHealth(t *testing.T) {
 		t.Fatalf("health not parsed: %+v", c.Health)
 	}
 	// Defaults survive a missing file.
-	t.Setenv("TB_CONFIG", filepath.Join(dir, "missing.yaml"))
+	t.Setenv("TF_CONFIG", filepath.Join(dir, "missing.yaml"))
 	d, err := Load()
 	if err != nil {
 		t.Fatal(err)

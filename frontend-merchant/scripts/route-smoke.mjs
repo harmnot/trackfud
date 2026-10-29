@@ -69,6 +69,16 @@ for (const l of locales) {
 }
 check(keySets.en === keySets.id && keySets.id === keySets.ms, 'locale key sets identical across en/id/ms');
 
+// 5. Staff invite explains the Stride & Earn join path; order ops respect runner/biker terms.
+const merchantAppSrc = readFileSync(join(root, 'src/App.tsx'), 'utf8');
+check(merchantAppSrc.includes('staff.howJoin'), 'Staff page shows how teammates join');
+for (const l of locales) {
+  const json = JSON.parse(readFileSync(join(root, `src/locales/${l}.json`), 'utf8'));
+  check(Boolean(json.staff?.howJoin) && Boolean(json.staff?.howJoinBody), `${l}.json has staff join guidance`);
+}
+const enOrders = JSON.parse(readFileSync(join(root, 'src/locales/en.json'), 'utf8')).orders;
+check(!/courier/i.test(enOrders.showCode) && !/courier/i.test(enOrders.courierNotified), 'order ops address runner/biker, not "courier"');
+
 if (failures > 0) {
   console.error(`\n${failures} smoke check(s) failed`);
   process.exit(1);

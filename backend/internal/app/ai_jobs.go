@@ -43,11 +43,12 @@ func newAIService(cfg ai.Config) *AIService {
 	return &AIService{cli: c, transcriber: tr, cropper: ai.NewMetaCropper(cfg)}
 }
 
-// aiConfigOf maps server config to the AI client config. The key comes from
-// env only and never appears in any API response.
+// aiConfigOf maps server config to the AI client config. Credentials come
+// from env only and never appear in any API response.
 func aiConfigOf(cfg *config.Config) ai.Config {
 	return ai.Config{
 		APIKey: cfg.AI.MetaAPIKey, BaseURL: cfg.AI.MetaBaseURL,
+		ModalKey: cfg.AI.ModalKey, ModalSecret: cfg.AI.ModalSecret,
 		SparkModel: cfg.AI.SparkModel, ContributorModel: cfg.AI.ContributorModel,
 		TranscribeModel: cfg.AI.TranscribeModel, SAMModel: cfg.AI.SAMModel,
 	}

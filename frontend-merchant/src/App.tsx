@@ -965,6 +965,10 @@ function StaffPage() {
                         </p>
                     </div>
                 </div>
+                <div className="tb-card mt-3">
+                    <p className="text-sm font-bold">{t("staff.howJoin")}</p>
+                    <p className="tb-sub mt-1">{t("staff.howJoinBody")}</p>
+                </div>
                 <div className="tb-card mt-3 flex flex-col gap-3">
                     <Field label={t("staff.email")}>
                         <input

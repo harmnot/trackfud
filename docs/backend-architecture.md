@@ -65,7 +65,7 @@ backend/
 - Define narrow interfaces at the consumer (`ledger.Poster`, `notify.Sender`,
   `payment.Provider`), implement in the provider package. Keeps Paddle/mock,
   Brevo/Mailpit, R2/local swappable for tests.
-- Request-scoped values (user, roles, `X-TB-App`) travel in `context.Context`
+- Request-scoped values (user, roles, `X-TF-App`) travel in `context.Context`
   via middleware, never as extra function params through domain layers.
 
 ```go

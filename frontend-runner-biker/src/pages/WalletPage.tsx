@@ -6,16 +6,24 @@
  */
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
 import { Button, Field, List, Item, Note, Page, Ring, Stat } from '../components/ui';
+import { fetchApplication, isPartnerUnlocked, partnerStateOf } from '../features/profile/profileApi';
+import { useStaff } from '../features/staff/staffStore';
 import { balanceMinor, useWallet } from '../features/wallet/walletStore';
 import { fetchCoach, type CoachWeekly } from '../features/coach/coachApi';
 import { activeSecondsToday, dayStreak, db, weeklyActiveMinutes, type SessionSummary } from '../lib/db';
 import { DAILY_CAP_S, WHO_WEEKLY_GOAL_MIN, formatDistance, formatDuration, formatMoney, resolveUnits } from '../lib/format';
+import { downloadText, pointsToGpx } from '../lib/gpx';
 import { logger } from '../lib/logger';
 import i18n from '../i18n';
 
 export function WalletPage() {
   const { t } = useTranslation();
+  const appQ = useQuery({ queryKey: ['wallet-application'], queryFn: fetchApplication });
+  const staffActive = useStaff((s) => s.active);
+  const unlocked = isPartnerUnlocked({ partner: partnerStateOf(appQ.data?.status), staffActive });
   const txs = useWallet((s) => s.txs);
   const currency = useWallet((s) => s.currency);
   const loaded = useWallet((s) => s.loaded);
@@ -92,6 +100,16 @@ export function WalletPage() {
   return (
     <Page>
       <h1 className="tb-display">{t('wallet.title')}</h1>
+      {!unlocked && appQ.isSuccess && (
+        <div className="tb-card mt-3">
+          <p className="text-sm font-bold">{t('account.partnerTitle')}</p>
+          <p className="tb-sub mt-1">{t('account.deliveryLocked')}</p>
+          <div className="mt-3 flex flex-col gap-2">
+            <Link to="/onboarding" className="tb-btn tb-btn-pine tb-btn-block">{t('account.becomePartner')}</Link>
+            <Link to="/run-setup" className="tb-btn tb-btn-soft tb-btn-block">{t('account.startTracking')}</Link>
+          </div>
+        </div>
+      )}
       <div className="tb-timer mt-3">
         <p className="tb-run-hero">
           {liveBal && serverLoaded ? formatMoney(liveBal.balanceMinor, liveBal.currency, locale) : loaded ? formatMoney(bal, currency, locale) : '…'}
@@ -111,7 +129,7 @@ export function WalletPage() {
             </Field>
           </div>
           <div className="flex-1 tb-withdraw-btn">
-            <Button block variant="sun" onClick={() => void withdraw()}>{t('wallet.withdraw')}</Button>
+            <Button block variant="sun" disabled={!unlocked} onClick={() => void withdraw()}>{t('wallet.withdraw')}</Button>
           </div>
         </div>
         {msg && <div className="mt-2"><Note tone="info">{msg}</Note></div>}
@@ -126,6 +144,33 @@ export function WalletPage() {
             <Stat value={formatMoney(last.earningsMinor, last.currency, locale)} label={t('run.earned')} />
           </div>
           {last.gapCount > 0 && <p className="tb-sub mt-2">{t('run.gaps', { count: last.gapCount })}</p>}
+          <div className="mt-2">
+            <Button
+              variant="soft"
+              onClick={() =>
+                void (async () => {
+                  try {
+                    const pts = await db.points.where({ sessionId: last.sessionId }).sortBy('ts');
+                    if (pts.length === 0) {
+                      setMsg(t('wallet.gpxEmpty'));
+                      return;
+                    }
+                    downloadText({
+                      text: pointsToGpx({ points: pts, name: `Trackfud ${new Date(last.startedAt).toISOString()}` }),
+                      filename: `trackfud-${last.sessionId.slice(0, 8)}.gpx`,
+                      mime: 'application/gpx+xml',
+                    });
+                    setMsg(t('wallet.gpxSaved'));
+                  } catch (err) {
+                    logger.warn('gpx export failed', err);
+                    setMsg(t('wallet.gpxEmpty'));
+                  }
+                })()
+              }
+            >
+              {t('wallet.gpxExport')}
+            </Button>
+          </div>
         </div>
       )}
 

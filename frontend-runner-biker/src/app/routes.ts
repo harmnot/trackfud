@@ -1,4 +1,4 @@
-/** Canonical route table for the Courier PWA (used by App + smoke test). */
+/** Canonical route table for the Stride & Earn PWA, served under `/courier/` (used by App + smoke test). */
 
 export const ROUTES = {
   onboarding: '/onboarding',

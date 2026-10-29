@@ -1,16 +1,40 @@
 {
   "app": {
+    "brand": "Stride & Earn",
     "tagline": "Run or ride. Earn while you move.",
     "safety": "No penalty for declining. No rush timers while you move."
   },
   "nav": {
-    "onboarding": "Onboarding",
+    "onboarding": "Become a Partner",
     "checklist": "Checklist",
     "fitness": "Fitness test",
-    "status": "Status",
+    "status": "Account",
     "run": "Run",
     "delivery": "Delivery",
     "wallet": "Wallet"
+  },
+  "account": {
+    "title": "Your Stride & Earn account",
+    "personal": "Personal data",
+    "name": "Full name",
+    "email": "Email",
+    "phone": "Phone number",
+    "address": "Address",
+    "notSet": "Not set yet",
+    "modeRunner": "Runner",
+    "modeBiker": "Biker",
+    "partnerTitle": "Earn while you run or ride",
+    "partnerBody": "Become a Trackfud partner and get paid for deliveries that fit your workout. Complete the partner form and fitness test — our team reviews every application.",
+    "becomePartner": "Become a Partner",
+    "continuePartner": "Continue partner application",
+    "partnerPending": "Application under review — we will notify you once the team decides.",
+    "partnerApproved": "You are a Trackfud partner. Deliveries and earnings are unlocked.",
+    "partnerRejected": "Your last application was not approved. Review the reason below and apply again when ready.",
+    "startTracking": "Start tracking a run or ride",
+    "fitnessCta": "Take the fitness test",
+    "walletCta": "Open wallet",
+    "deliveryLocked": "Deliveries unlock after your partner application is approved. Tracking stays free for everyone.",
+    "addressLine": "{city}, {country}"
   },
   "run": {
     "setupTitle": "Start a session",
@@ -81,7 +105,10 @@
     "history": "History",
     "empty": "No earnings yet — go for a run.",
     "live": "Live wallet balance.",
-    "offline": "Offline — recorded on this device only."
+    "offline": "Offline — recorded on this device only.",
+    "gpxExport": "Export last run (.gpx)",
+    "gpxEmpty": "No GPS points saved for the last session yet.",
+    "gpxSaved": "GPX downloaded — import it into Strava."
   },
   "coach": {
     "title": "Coach this week",
@@ -98,7 +125,7 @@
     "logout": "Log out"
   },
   "onboard": {
-    "title": "Become a courier",
+    "title": "Become a Partner",
     "mode": "I will deliver by",
     "runner": "Running (foot)",
     "biker": "Pedal bike only",
@@ -107,7 +134,18 @@
     "selfie": "Selfie (private)",
     "bikePhoto": "Bike photo (private, bikers)",
     "saveDraft": "Draft auto-saves on this device and to your account when logged in.",
-    "uploaded": "Uploaded ✓"
+    "uploaded": "Uploaded ✓",
+    "birthDate": "Date of birth",
+    "nationality": "Nationality",
+    "city": "City",
+    "country": "Country",
+    "emergencyName": "Emergency contact name",
+    "emergencyPhone": "Emergency contact phone (E.164)",
+    "idType": "ID type (e.g. KTP)",
+    "idNumber": "ID number",
+    "bagLiters": "Bag size (liters)",
+    "bikeType": "Bike type",
+    "profileHint": "These details go to your partner profile for the review team."
   },
   "check": {
     "title": "Pre-run checklist",
@@ -132,8 +170,10 @@
     "result": "Result"
   },
   "status": {
-    "title": "Application status",
-    "none": "No application yet — complete onboarding and the fitness test."
+    "title": "Account",
+    "none": "No partner application yet — tracking is free. Apply when you want to earn.",
+    "runnerLabel": "Runner — Stride & Earn",
+    "bikerLabel": "Biker — Stride & Earn"
   },
   "voice": {
     "hold": "Hold to talk",
@@ -151,8 +191,7 @@
   },
   "staff": {
     "title": "Staff mode",
-    "intro": "Invited by your restaurant? Enter the invite code — no fitness test, fallback deliveries only.",
-    "invite": "Invite code",
+    "intro": "Invited by your restaurant? Pick it below — no fitness test, fallback deliveries only.",
     "name": "Your name",
     "travel": "How you deliver",
     "travel_foot": "On foot",
@@ -160,14 +199,18 @@
     "travel_own": "Own way",
     "enter": "Start staff mode",
     "exit": "Leave staff mode",
-    "badCode": "Enter the invite code from your restaurant (6+ letters/digits).",
     "badName": "Enter your name.",
     "noTest": "Staff mode: no fitness test needed — fallback deliveries only.",
     "fallbackOnly": "Fallback offers only — runners and bikers always get first pick.",
     "onDuty": "Staff mode · {name} — fallback deliveries only.",
     "onDutyShort": "Staff mode on — fallback deliveries only, no fitness test.",
     "delivering": "Staff delivery · {travel} · tracked live.",
-    "demoMerchant": "Demo Restaurant"
+    "restaurant": "Restaurant",
+    "noInvite": "No invite yet",
+    "noInviteBody": "Ask your restaurant to invite this email in the Merchant app (Staff page). Then come back here and clock on shift.",
+    "joinHint": "Sign in with the same email the restaurant invited. Invites are by email — there is no code.",
+    "notAllowed": "This account is not on that restaurant's staff roster.",
+    "needDeliver": "That roster entry cannot deliver yet — ask the owner to enable “Can deliver”."
   },
   "tracks": {
     "title": "Saved tracks",
@@ -196,6 +239,9 @@
   "chat": {
     "title": "Chat",
     "offline": "Live thread per delivery — tap Translate on a message for the server translation.",
+    "noDelivery": "No active delivery yet",
+    "noDeliveryBody": "Chat opens with the customer as soon as a delivery is assigned to you. Start a session to get offers.",
+    "errorLoad": "Could not load messages. Check your connection and try again.",
     "empty": "No messages yet — say hi with a quick reply.",
     "quick": "Quick replies",
     "placeholder": "Message…",
@@ -215,11 +261,13 @@
     "count": "{count} deliveries rated",
     "tags": "What customers say",
     "demo": "Sample summary until live ratings ship",
+    "errorLoad": "Could not load your ratings. Check your connection and try again.",
     "none": "No rated deliveries yet — your stars land here."
   },
   "common": {
     "loading": "Loading…",
     "error": "Something went wrong",
+    "retry": "Try again",
     "updateReady": "A new version is ready.",
     "reload": "Reload"
   }

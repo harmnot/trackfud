@@ -275,7 +275,7 @@ export default function OrdersPage() {
           {incoming.length > 0 && (
             <section aria-label={t('orders.incoming')}>
               <h2 className="tb-h2 tb-kitchen-h">{t('orders.incoming')} ({incoming.length})</h2>
-              <List className="flex flex-col gap-3">
+              <List className="tb-orders-grid">
                 {incoming.map((o, i) => {
                   const card = cardOf(o.id);
                   return (
@@ -332,7 +332,7 @@ export default function OrdersPage() {
           {cooking.length > 0 && (
             <section aria-label={t('orders.cooking')}>
               <h2 className="tb-h2 tb-kitchen-h">{t('orders.cooking')} ({cooking.length})</h2>
-              <List className="flex flex-col gap-3">
+              <List className="tb-orders-grid">
                 {cooking.map((o, i) => {
                   const card = cardOf(o.id);
                   return (
@@ -360,7 +360,7 @@ export default function OrdersPage() {
           {pickup.length > 0 && (
             <section aria-label={t('orders.pickup')}>
               <h2 className="tb-h2 tb-kitchen-h">{t('orders.pickup')} ({pickup.length})</h2>
-              <List className="flex flex-col gap-3">
+              <List className="tb-orders-grid">
                 {pickup.map((o, i) => (
                   <Item key={o.id} index={i}>
                     <article className="tb-card tb-order-ready" aria-label={`${t('orders.order')} ${o.code}`}>

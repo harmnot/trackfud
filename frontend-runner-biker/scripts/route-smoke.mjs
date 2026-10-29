@@ -45,6 +45,45 @@ for (const l of locales) {
 }
 check(keySets.en === keySets.id && keySets.id === keySets.ms, 'locale key sets identical across en/id/ms');
 
+// 5. Stride & Earn account: personal data + partner CTA are wired, locales agree.
+const statusSrc = readFileSync(join(root, 'src/pages/StatusPage.tsx'), 'utf8');
+check(statusSrc.includes('fetchMe') && statusSrc.includes('fetchProfile'), 'Status page loads personal data from API');
+check(statusSrc.includes('becomePartner') || statusSrc.includes('account.becomePartner'), 'Status page offers Become a Partner');
+check(!appSrc.includes('Runner courier') && !appSrc.includes('Trackfud · Courier'), 'App no longer brands runner/biker as Courier');
+check(!appSrc.includes('role: "courier"'), 'Signup no longer forces the partner role');
+check(appSrc.includes('nav("/run-setup")'), 'Login/signup land on Run Setup (open tracking)');
+const accountSets = {};
+for (const l of locales) {
+  const json = JSON.parse(readFileSync(join(root, `src/locales/${l}.json`), 'utf8'));
+  accountSets[l] = Object.keys(json.account ?? {}).sort().join(',');
+  check(Boolean(json.account?.personal) && Boolean(json.account?.becomePartner), `${l}.json has Stride & Earn account strings`);
+  check((json.account?.addressLine ?? '').includes('{city}') && (json.account?.addressLine ?? '').includes('{country}'), `${l}.json address placeholders intact`);
+}
+check(accountSets.en === accountSets.id && accountSets.id === accountSets.ms, 'account locale keys identical across en/id/ms');
+
+// 6. Staff mode joins by email membership + real shift clock (no invite codes).
+const staffPage = readFileSync(join(root, 'src/pages/StaffPage.tsx'), 'utf8');
+const staffStore = readFileSync(join(root, 'src/features/staff/staffStore.ts'), 'utf8');
+const courierApiSrc = readFileSync(join(root, 'src/features/delivery/courierApi.ts'), 'utf8');
+check(staffPage.includes('fetchMemberships') && staffPage.includes('setStaffShift'), 'Staff page enters via memberships + server shift clock');
+check(!staffPage.includes('inviteCode') && !staffStore.includes('inviteCode'), 'no invite-code fiction left in staff flow');
+check(courierApiSrc.includes('/courier/staff/memberships'), 'client calls the memberships endpoint');
+const openapi = readFileSync(join(root, '../backend/api/openapi.yaml'), 'utf8');
+check(openapi.includes('/v1/courier/staff/memberships') && openapi.includes('listMemberships'), 'contract serves the memberships endpoint');
+const staffSets = {};
+for (const l of locales) {
+  const json = JSON.parse(readFileSync(join(root, `src/locales/${l}.json`), 'utf8'));
+  staffSets[l] = Object.keys(json.staff ?? {}).sort().join(',');
+  check(Boolean(json.staff?.restaurant) && Boolean(json.staff?.noInvite), `${l}.json has staff membership strings`);
+}
+check(staffSets.en === staffSets.id && staffSets.id === staffSets.ms, 'staff locale keys identical across en/id/ms');
+
+// 7. No hardcoded demo data rendered as live data.
+const ratingsSrc = readFileSync(join(root, 'src/pages/RatingsPage.tsx'), 'utf8');
+check(!ratingsSrc.includes('setSummary(DEMO_RATINGS)'), 'Ratings page never renders sample data as live');
+const chatSrc = readFileSync(join(root, 'src/pages/ChatPage.tsx'), 'utf8');
+check(chatSrc.includes('chat.noDelivery'), 'Chat explains itself without an active delivery');
+
 if (failures > 0) {
   console.error(`\n${failures} smoke check(s) failed`);
   process.exit(1);

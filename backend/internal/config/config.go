@@ -48,8 +48,9 @@ type Config struct {
 	Maps struct {
 		APIKey string
 	} `yaml:"-"`
-	// AI holds the Meta Model API wiring (B6). The key never leaves the
-	// server: it is absent from publicConfig and from every API response.
+	// AI holds the model-serving wiring (B6): Modal-hosted chat/text by
+	// default, Meta Model API direct as override. Credentials never leave
+	// the server: they are absent from publicConfig and every API response.
 	AI struct {
 		MetaAPIKey       string
 		MetaBaseURL      string
@@ -57,6 +58,10 @@ type Config struct {
 		ContributorModel string
 		TranscribeModel  string
 		SAMModel         string
+		// ModalKey/ModalSecret is the Modal proxy-token pair (wk-/ws-).
+		// Env-only; never in config.yaml.
+		ModalKey    string `yaml:"-"`
+		ModalSecret string `yaml:"-"`
 	} `yaml:"ai"`
 	Fitness struct {
 		RunnerDistanceM, BikerDistanceM       float64 `yaml:"runner_distance_m"`
@@ -162,7 +167,7 @@ func Load() (*Config, error) {
 	c.Dispatch.WIdle = 0.2
 	c.Dispatch.HeadingPenalty = 0.5
 	c.Dispatch.DetourRefreshM = 150
-	path := env("TB_CONFIG", "config.yaml")
+	path := env("TF_CONFIG", "config.yaml")
 	if b, err := os.ReadFile(path); err == nil {
 		// map nested keys manually via generic yaml to keep struct simple
 		var raw struct {
@@ -188,6 +193,13 @@ func Load() (*Config, error) {
 				Provider string `yaml:"provider"`
 				Sandbox  bool   `yaml:"sandbox_only"`
 			} `yaml:"payments"`
+			AI struct {
+				BaseURL     string `yaml:"base_url"`
+				Spark       string `yaml:"spark_model"`
+				Contributor string `yaml:"contributor_model"`
+				Transcribe  string `yaml:"transcribe_model"`
+				SAM         string `yaml:"sam_model"`
+			} `yaml:"ai"`
 			Fitness struct {
 				RD float64 `yaml:"runner_distance_m"`
 				BD float64 `yaml:"biker_distance_m"`
@@ -278,6 +290,21 @@ func Load() (*Config, error) {
 			c.Payments.Provider = raw.Payments.Provider
 		}
 		c.Payments.SandboxOnly = raw.Payments.Sandbox
+		if raw.AI.BaseURL != "" {
+			c.AI.MetaBaseURL = raw.AI.BaseURL
+		}
+		if raw.AI.Spark != "" {
+			c.AI.SparkModel = raw.AI.Spark
+		}
+		if raw.AI.Contributor != "" {
+			c.AI.ContributorModel = raw.AI.Contributor
+		}
+		if raw.AI.Transcribe != "" {
+			c.AI.TranscribeModel = raw.AI.Transcribe
+		}
+		if raw.AI.SAM != "" {
+			c.AI.SAMModel = raw.AI.SAM
+		}
 		if raw.Fitness.RD > 0 {
 			c.Fitness.RunnerDistanceM = raw.Fitness.RD
 		}
@@ -418,27 +445,46 @@ func Load() (*Config, error) {
 			c.Dispatch.DetourRefreshM = d.DetourM
 		}
 	}
-	c.Payments.Provider = env("TB_PAYMENTS_PROVIDER", c.Payments.Provider)
+	c.Payments.Provider = env("TF_PAYMENTS_PROVIDER", c.Payments.Provider)
 	if c.Payments.Provider == "" {
 		c.Payments.Provider = "paddle_sandbox"
 	}
 	c.DatabaseURL = env("DATABASE_URL", "postgres://Trackfud:Trackfud@localhost:5432/Trackfud?sslmode=disable")
-	c.JWTSecret = env("TB_JWT_SECRET", "dev-only-change-me-32chars-minimum!!")
-	c.PaddleWebhookSecret = env("TB_PADDLE_WEBHOOK_SECRET", "")
-	c.UploadDir = env("TB_UPLOAD_DIR", "data/uploads")
-	c.SMTPHost = env("TB_SMTP_HOST", "")
-	c.SMTPPort = env("TB_SMTP_PORT", "1025")
-	c.Maps.APIKey = env("TB_GOOGLE_MAPS_KEY", "")
-	c.AI.MetaAPIKey = env("TB_META_API_KEY", "")
-	c.AI.MetaBaseURL = env("TB_META_BASE_URL", "https://api.meta.ai/v1")
-	c.AI.SparkModel = env("TB_META_SPARK_MODEL", "muse-spark-1.3")
-	c.AI.ContributorModel = env("TB_META_CONTRIBUTOR_MODEL", "muse-spark-1.3-contributor")
-	c.AI.TranscribeModel = env("TB_META_TRANSCRIBE_MODEL", "muse-voice-transcribe-1.0")
-	c.AI.SAMModel = env("TB_META_SAM_MODEL", "sam-3.1")
-	if v := os.Getenv("TB_ADDR"); v != "" {
+	c.JWTSecret = env("TF_JWT_SECRET", "dev-only-change-me-32chars-minimum!!")
+	c.PaddleWebhookSecret = env("TF_PADDLE_WEBHOOK_SECRET", "")
+	c.UploadDir = env("TF_UPLOAD_DIR", "data/uploads")
+	c.SMTPHost = env("TF_SMTP_HOST", "")
+	c.SMTPPort = env("TF_SMTP_PORT", "1025")
+	c.Maps.APIKey = env("TF_GOOGLE_MAPS_KEY", "")
+	c.AI.MetaAPIKey = env("TF_META_API_KEY", "")
+	c.AI.MetaBaseURL = env("TF_META_BASE_URL", c.AI.MetaBaseURL)
+	if c.AI.MetaBaseURL == "" {
+		c.AI.MetaBaseURL = "https://api.meta.ai/v1"
+	}
+	// Modal proxy-token pair (wk-/ws-). Env-only; never commit these.
+	c.AI.ModalKey = env("TF_MODAL_KEY", "")
+	c.AI.ModalSecret = env("TF_MODAL_SECRET", "")
+	// Env wins over config.yaml; hardcoded ids are the last resort.
+	c.AI.SparkModel = env("TF_META_SPARK_MODEL", c.AI.SparkModel)
+	if c.AI.SparkModel == "" {
+		c.AI.SparkModel = "muse-spark-1.3"
+	}
+	c.AI.ContributorModel = env("TF_META_CONTRIBUTOR_MODEL", c.AI.ContributorModel)
+	if c.AI.ContributorModel == "" {
+		c.AI.ContributorModel = "muse-spark-1.3-contributor"
+	}
+	c.AI.TranscribeModel = env("TF_META_TRANSCRIBE_MODEL", c.AI.TranscribeModel)
+	if c.AI.TranscribeModel == "" {
+		c.AI.TranscribeModel = "muse-voice-transcribe-1.0"
+	}
+	c.AI.SAMModel = env("TF_META_SAM_MODEL", c.AI.SAMModel)
+	if c.AI.SAMModel == "" {
+		c.AI.SAMModel = "sam-3.1"
+	}
+	if v := os.Getenv("TF_ADDR"); v != "" {
 		c.Server.Addr = v
 	}
-	if v := os.Getenv("TB_DEMO_MODE"); v != "" {
+	if v := os.Getenv("TF_DEMO_MODE"); v != "" {
 		c.Server.DemoMode, _ = strconv.ParseBool(v)
 	}
 	return c, nil

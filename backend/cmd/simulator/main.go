@@ -115,7 +115,7 @@ func (c *client) do(token, method, path string, body any, out any) (int, error) 
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	req.Header.Set("X-TB-App", "courier")
+	req.Header.Set("X-TF-App", "courier")
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return 0, err

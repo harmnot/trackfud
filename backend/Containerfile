@@ -10,6 +10,6 @@ WORKDIR /app
 COPY --from=builder /out/api /app/api
 COPY config.yaml /app/config.yaml
 COPY db/migrations /app/db/migrations
-ENV TB_CONFIG=/app/config.yaml TB_MIGRATIONS_DIR=/app/db/migrations TB_UPLOAD_DIR=/data/uploads
+ENV TF_CONFIG=/app/config.yaml TF_MIGRATIONS_DIR=/app/db/migrations TF_UPLOAD_DIR=/data/uploads
 EXPOSE 8080
 ENTRYPOINT ["/app/api"]

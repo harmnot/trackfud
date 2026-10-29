@@ -1077,6 +1077,40 @@ func (s *Server) staffShift(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"merchant_id": b.MerchantID, "on_shift": b.OnShift})
 }
 
+// listMemberships shows the restaurants where the caller is on the staff
+// roster (matched by account email, the same link the merchant invite and
+// signup use). The Stride & Earn app uses this to enter staff mode with a
+// real merchant instead of an invite code.
+func (s *Server) listMemberships(w http.ResponseWriter, r *http.Request) {
+	c := claims(r)
+	rows, err := s.db.Query(r.Context(), `SELECT ms.merchant_id, m.name, ms.can_deliver, ms.on_shift, ms.status
+		FROM merchant_staff ms JOIN users u ON lower(u.email)=lower(ms.email)
+		JOIN merchants m ON m.id=ms.merchant_id WHERE u.id=$1 ORDER BY m.name`, c.Sub)
+	if err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id, name, status string
+		var can, on bool
+		if err := rows.Scan(&id, &name, &can, &on, &status); err != nil {
+			continue
+		}
+		out = append(out, staffMembershipView(id, name, can, on, status))
+	}
+	writeJSON(w, 200, map[string]any{"memberships": out})
+}
+
+// staffMembershipView shapes one roster row exactly like the openapi
+// StaffMembership schema (merchant_id, merchant_name, can_deliver,
+// on_shift, status).
+func staffMembershipView(id, name string, can, on bool, status string) map[string]any {
+	return map[string]any{"merchant_id": id, "merchant_name": name,
+		"can_deliver": can, "on_shift": on, "status": status}
+}
+
 func (s *Server) listStaffOffers(w http.ResponseWriter, r *http.Request) {
 	c := claims(r)
 	rows, err := s.db.Query(r.Context(), `SELECT `+offerCols+` FROM dispatch_offers

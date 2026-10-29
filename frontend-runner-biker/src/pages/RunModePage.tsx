@@ -336,7 +336,7 @@ export function RunModePage() {
         <div className="mt-3"><Note tone="info">{t('staff.onDuty', { name: staffName })}</Note></div>
       )}
       {cheer && (
-        <div className="mt-3"><Note tone="info">💪 {cheer}</Note></div>
+        <div className="mt-3 tb-toast" key={cheer}><Note tone="info">💪 {cheer}</Note></div>
       )}
       {stats.stale && (
         <div className="mt-3"><Note tone="error">{t('run.stale')}</Note></div>

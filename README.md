@@ -12,6 +12,7 @@ bash scripts/podman-up.sh
 
 Then open in your browser:
 
+- CMS Admin (back-office): http://localhost:8000/back-office/
 - Customer: http://localhost:8000/customer/
 - Courier: http://localhost:8000/courier/
 - Merchant: http://localhost:8000/merchant/
@@ -26,7 +27,7 @@ If you prefer compose (after installing `podman-compose`): `podman compose up --
 
 ## Dev without containers (optional)
 
-Backend: `podman run -d --name tb-db -e POSTGRES_USER=Trackfud -e POSTGRES_PASSWORD=Trackfud -e POSTGRES_DB=Trackfud -p 5432:5432 docker.io/postgis/postgis:18-3.6`, then `cd backend && DATABASE_URL=postgres://Trackfud:Trackfud@localhost:5432/Trackfud?sslmode=disable go run ./cmd/api`.
+Backend: `podman run -d --name tf-db -e POSTGRES_USER=Trackfud -e POSTGRES_PASSWORD=Trackfud -e POSTGRES_DB=Trackfud -p 5432:5432 docker.io/postgis/postgis:18-3.6`, then `cd backend && DATABASE_URL=postgres://Trackfud:Trackfud@localhost:5432/Trackfud?sslmode=disable go run ./cmd/api`.
 Frontends: `corepack pnpm install && corepack pnpm dev` in each `frontend-*` folder (Vite proxies `/api` to `localhost:8081`; run backend on 8081 or set `VITE_API_BASE`).
 
 ## What Milestone 1 includes

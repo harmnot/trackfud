@@ -1,16 +1,40 @@
 {
   "app": {
+    "brand": "Stride & Earn",
     "tagline": "Lari atau bersepeda. Dibayar sambil bergerak.",
     "safety": "Menolak tawaran tidak dihukum. Tidak ada timer buru-buru saat bergerak."
   },
   "nav": {
-    "onboarding": "Pendaftaran",
+    "onboarding": "Jadi Partner",
     "checklist": "Ceklis",
     "fitness": "Tes kebugaran",
-    "status": "Status",
+    "status": "Akun",
     "run": "Lari",
     "delivery": "Antar",
     "wallet": "Dompet"
+  },
+  "account": {
+    "title": "Akun Stride & Earn kamu",
+    "personal": "Data pribadi",
+    "name": "Nama lengkap",
+    "email": "Email",
+    "phone": "Nomor telepon",
+    "address": "Alamat",
+    "notSet": "Belum diisi",
+    "modeRunner": "Runner",
+    "modeBiker": "Biker",
+    "partnerTitle": "Dibayar sambil lari atau bersepeda",
+    "partnerBody": "Jadi partner Trackfud dan dibayar untuk antar yang cocok dengan latihanmu. Lengkapi formulir partner dan tes kebugaran — tim kami meninjau setiap lamaran.",
+    "becomePartner": "Jadi Partner",
+    "continuePartner": "Lanjutkan lamaran partner",
+    "partnerPending": "Lamaran sedang ditinjau — kami kabari setelah tim memutuskan.",
+    "partnerApproved": "Kamu adalah partner Trackfud. Antar dan penghasilan sudah terbuka.",
+    "partnerRejected": "Lamaran terakhir belum disetujui. Baca alasannya di bawah dan ajukan lagi saat siap.",
+    "startTracking": "Mulai lacak lari atau sepedaan",
+    "fitnessCta": "Ikuti tes kebugaran",
+    "walletCta": "Buka dompet",
+    "deliveryLocked": "Antar terbuka setelah lamaran partner disetujui. Pelacakan tetap gratis untuk semua.",
+    "addressLine": "{city}, {country}"
   },
   "run": {
     "setupTitle": "Mulai sesi",
@@ -81,7 +105,10 @@
     "history": "Riwayat",
     "empty": "Belum ada penghasilan — ayo lari.",
     "live": "Saldo dompet live.",
-    "offline": "Offline — tercatat di perangkat ini saja."
+    "offline": "Offline — tercatat di perangkat ini saja.",
+    "gpxExport": "Ekspor lari terakhir (.gpx)",
+    "gpxEmpty": "Belum ada titik GPS untuk sesi terakhir.",
+    "gpxSaved": "GPX diunduh — impor ke Strava."
   },
   "coach": {
     "title": "Pelatih minggu ini",
@@ -98,7 +125,7 @@
     "logout": "Keluar"
   },
   "onboard": {
-    "title": "Jadi kurir",
+    "title": "Jadi Partner",
     "mode": "Saya mengantar dengan",
     "runner": "Lari (jalan kaki)",
     "biker": "Sepeda kayuh saja",
@@ -107,7 +134,18 @@
     "selfie": "Selfie (privat)",
     "bikePhoto": "Foto sepeda (privat, pesepeda)",
     "saveDraft": "Draf tersimpan otomatis di perangkat dan akun.",
-    "uploaded": "Terunggah ✓"
+    "uploaded": "Terunggah ✓",
+    "birthDate": "Tanggal lahir",
+    "nationality": "Kewarganegaraan",
+    "city": "Kota",
+    "country": "Negara",
+    "emergencyName": "Nama kontak darurat",
+    "emergencyPhone": "Telepon kontak darurat (E.164)",
+    "idType": "Jenis ID (mis. KTP)",
+    "idNumber": "Nomor ID",
+    "bagLiters": "Ukuran tas (liter)",
+    "bikeType": "Jenis sepeda",
+    "profileHint": "Detail ini masuk ke profil partner untuk tim peninjau."
   },
   "check": {
     "title": "Ceklis sebelum lari",
@@ -132,8 +170,10 @@
     "result": "Hasil"
   },
   "status": {
-    "title": "Status lamaran",
-    "none": "Belum ada lamaran — lengkapi pendaftaran dan tes."
+    "title": "Akun",
+    "none": "Belum ada lamaran partner — pelacakan gratis. Ajukan saat ingin dibayar.",
+    "runnerLabel": "Runner — Stride & Earn",
+    "bikerLabel": "Biker — Stride & Earn"
   },
   "voice": {
     "hold": "Tahan untuk bicara",
@@ -151,8 +191,7 @@
   },
   "staff": {
     "title": "Mode staf",
-    "intro": "Diundang restoranmu? Masukkan kode undangan — tanpa tes kebugaran, hanya antar cadangan.",
-    "invite": "Kode undangan",
+    "intro": "Diundang restoranmu? Pilih di bawah — tanpa tes kebugaran, hanya antar cadangan.",
     "name": "Namamu",
     "travel": "Cara mengantar",
     "travel_foot": "Jalan kaki",
@@ -160,14 +199,18 @@
     "travel_own": "Cara sendiri",
     "enter": "Mulai mode staf",
     "exit": "Keluar mode staf",
-    "badCode": "Masukkan kode undangan dari restoran (6+ huruf/angka).",
     "badName": "Masukkan namamu.",
     "noTest": "Mode staf: tanpa tes kebugaran — hanya antar cadangan.",
     "fallbackOnly": "Hanya tawaran cadangan — runner dan pesepeda selalu didahulukan.",
     "onDuty": "Mode staf · {name} — hanya antar cadangan.",
     "onDutyShort": "Mode staf aktif — hanya antar cadangan, tanpa tes.",
     "delivering": "Antar staf · {travel} · terlacak live.",
-    "demoMerchant": "Resto Demo"
+    "restaurant": "Restoran",
+    "noInvite": "Belum ada undangan",
+    "noInviteBody": "Minta restoranmu mengundang email ini di aplikasi Merchant (halaman Staff). Lalu kembali ke sini dan mulai shift.",
+    "joinHint": "Masuk dengan email yang sama dengan yang diundang restoran. Undangan via email — tidak ada kode.",
+    "notAllowed": "Akun ini tidak ada di daftar staff restoran itu.",
+    "needDeliver": "Entri itu belum bisa mengantar — minta owner mengaktifkan “Can deliver”."
   },
   "tracks": {
     "title": "Rute tersimpan",
@@ -196,6 +239,9 @@
   "chat": {
     "title": "Chat",
     "offline": "Utas live per antar — ketuk Terjemahkan untuk terjemahan server.",
+    "noDelivery": "Belum ada antar aktif",
+    "noDeliveryBody": "Chat dengan pelanggan terbuka begitu ada antar untukmu. Mulai sesi untuk menerima tawaran.",
+    "errorLoad": "Pesan tidak bisa dimuat. Cek koneksi dan coba lagi.",
     "empty": "Belum ada pesan — sapa dengan balasan cepat.",
     "quick": "Balasan cepat",
     "placeholder": "Pesan…",
@@ -215,11 +261,13 @@
     "count": "{count} antar dinilai",
     "tags": "Kata pelanggan",
     "demo": "Contoh ringkasan sampai rating live hadir",
+    "errorLoad": "Rating tidak bisa dimuat. Cek koneksi dan coba lagi.",
     "none": "Belum ada antar bernilai — bintangmu muncul di sini."
   },
   "common": {
     "loading": "Memuat…",
     "error": "Ada yang salah",
+    "retry": "Coba lagi",
     "updateReady": "Versi baru siap.",
     "reload": "Muat ulang"
   }

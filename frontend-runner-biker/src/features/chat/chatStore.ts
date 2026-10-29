@@ -66,6 +66,8 @@ function fromServer(m: ServerMessage): ChatMsg {
 type ChatState = {
   messages: ChatMsg[];
   loaded: boolean;
+  /** True when the server thread could not be loaded (cache may still show). */
+  error: boolean;
   deliveryId: string | null;
   load: (args: { deliveryId: string | null }) => Promise<void>;
   send: (args: { deliveryId: string | null; text: string; lang: string }) => Promise<void>;
@@ -76,15 +78,17 @@ type ChatState = {
 export const useChat = create<ChatState>((set, get) => ({
   messages: [],
   loaded: false,
+  error: false,
   deliveryId: null,
   load: async ({ deliveryId }) => {
-    set({ deliveryId, loaded: false });
+    set({ deliveryId, loaded: false, error: false });
     let server: ServerMessage[] = [];
     if (deliveryId) {
       try {
         server = await fetchMessages({ deliveryId });
       } catch (err) {
         logger.warn('chat fetch failed, IDB cache owns the thread', err);
+        set({ error: true });
       }
     }
     try {

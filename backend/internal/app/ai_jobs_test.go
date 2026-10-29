@@ -45,8 +45,8 @@ func TestAIJobKindsDistinct(t *testing.T) {
 // The server builds its AI client from env-backed config with no key by
 // default (fallback mode), and the key never comes from the request path.
 func TestAIConfigDefaultsToFallback(t *testing.T) {
-	t.Setenv("TB_META_API_KEY", "")
-	t.Setenv("TB_CONFIG", "/tmp/tb-no-such-config.yaml")
+	t.Setenv("TF_META_API_KEY", "")
+	t.Setenv("TF_CONFIG", "/tmp/tf-no-such-config.yaml")
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("config: %v", err)

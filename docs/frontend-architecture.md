@@ -83,7 +83,7 @@ Shared cross-app packages (when the `frontend/` workspace exists):
 
 - Auth: access token in memory; refresh token in an `HttpOnly`, `Secure`,
   `SameSite` cookie set by the API; never store tokens in `localStorage`.
-  Per-app session: send `X-TB-App: customer|courier|merchant`, separate cookie
+  Per-app session: send `X-TF-App: customer|courier|merchant`, separate cookie
   per app; storage keys prefixed per app (`tb:courier:*`). Enables judge
   multi-login in one browser. WS connects via single-use 30 s `ws/ticket`.
 - Payments open Paddle Checkout (Paddle.js overlay); never handle card data in

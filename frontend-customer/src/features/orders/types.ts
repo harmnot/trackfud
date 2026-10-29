@@ -33,6 +33,7 @@ export type Order = {
   code: string;
   status: OrderStatus;
   merchant_id: string;
+  merchant_name?: string;
   currency: string;
   subtotal: Money;
   delivery_fee: Money;

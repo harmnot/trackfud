@@ -1,48 +1,221 @@
 #!/usr/bin/env bash
-# Trackfud Milestone 1 — plain Podman (no compose provider needed).
+# Trackfud — plain Podman (no compose provider needed).
+# All config comes from dotenv files, not hardcoded constants:
+#   backend/.env                → backend runtime (DATABASE_URL, TF_*, POSTGRES_*)
+#   frontend-*/.env             → frontend build-time (VITE_*)
+#   optional .env at repo root  → overrides / compose-style defaults
 # Usage: bash scripts/podman-up.sh [--down]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+ROOT_ENV=".env"
+BACKEND_ENV="backend/.env"
+BACK_OFFICE_ENV="frontend-cms-admin/.env"
+CUSTOMER_ENV="frontend-customer/.env"
+COURIER_ENV="frontend-runner-biker/.env"
+MERCHANT_ENV="frontend-merchant/.env"
+
+# --- helpers ---------------------------------------------------------------
+
+load_env_file() {
+  local file="$1"
+  if [[ -f "$file" ]]; then
+    echo "==> Loading $file"
+    set -a
+    # shellcheck disable=SC1090
+    source "$file"
+    set +a
+  else
+    echo "WARN: $file not found — using defaults/env" >&2
+  fi
+}
+
+# Build --build-arg flags from VITE_* lines in a dotenv file.
+# Prints one --build-arg per line to stdout; caller collects into array.
+build_args_from_env() {
+  local file="$1"
+  if [[ ! -f "$file" ]]; then
+    return 0
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # trim leading/trailing whitespace
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    if [[ "$line" =~ ^VITE_[A-Za-z0-9_]*= ]]; then
+      local key="${line%%=*}"
+      local value="${line#*=}"
+      # strip surrounding single or double quotes
+      if [[ "$value" =~ ^\".*\"$ ]]; then
+        value="${value:1:-1}"
+      elif [[ "$value" =~ ^\'.*\'$ ]]; then
+        value="${value:1:-1}"
+      fi
+      printf '%s\n' "--build-arg"
+      printf '%s\n' "${key}=${value}"
+    fi
+  done < "$file"
+}
+
+# Replace localhost/127.0.0.1/db host in a postgres URL with the container host.
+remap_db_url() {
+  local url="$1"
+  local host="$2"
+  # postgres://user:pass@host:port/db?params → replace host part after @
+  printf '%s' "$url" | sed -E "s/@(localhost|127\.0\.0\.1|db|tf-db)(:[0-9]+)?/@${host}\2/"
+}
+
+# --- --down ---------------------------------------------------------------
+
 if [[ "${1:-}" == "--down" ]]; then
-  podman rm -f tb-gateway tb-merchant tb-courier tb-customer tb-backend tb-mailpit tb-db 2>/dev/null || true
-  echo "Stopped. Volumes kept (tb_pgdata, tb_uploads). Remove with: podman volume rm tb_pgdata tb_uploads"
+  podman rm -f tf-gateway tf-merchant tf-courier tf-customer tf-backend tf-mailpit tf-db 2>/dev/null || true
+  echo "Stopped. Volumes kept (tf_pgdata, tf_uploads). Remove with: podman volume rm tf_pgdata tf_uploads"
   exit 0
 fi
 
-podman network exists tb-net || podman network create tb-net
-podman volume exists tb_pgdata || podman volume create tb_pgdata
-podman volume exists tb_uploads || podman volume create tb_uploads
+# --- load environment -----------------------------------------------------
+
+# Root .env first (if present) — allows project-wide overrides
+if [[ -f "$ROOT_ENV" ]]; then
+  load_env_file "$ROOT_ENV"
+fi
+# Backend env is the source of truth for DB/auth/TF_* at runtime
+load_env_file "$BACKEND_ENV"
+
+# Defaults — only used when neither .env nor shell provides a value.
+: "${POSTGRES_USER:=Trackfud}"
+: "${POSTGRES_PASSWORD:=Trackfud}"
+: "${POSTGRES_DB:=Trackfud}"
+: "${DB_PORT:=5432}"
+: "${MAILPIT_UI_PORT:=8025}"
+: "${MAILPIT_SMTP_PORT:=1025}"
+: "${BACKEND_PORT:=8081}"
+: "${GATEWAY_PORT:=8000}"
+: "${TF_JWT_SECRET:=dev-only-change-me-32chars-minimum!!}"
+: "${TF_DEMO_MODE:=false}"
+: "${TF_SMTP_HOST:=localhost}"
+: "${TF_SMTP_PORT:=1025}"
+: "${DATABASE_URL:=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${DB_PORT}/${POSTGRES_DB}?sslmode=disable}"
+# Host/local dev upload dir stays relative; container will force /data/uploads (see below)
+
+# Remap localhost hosts to podman network names (tf-db / tf-mailpit)
+CONTAINER_DB_URL="$(remap_db_url "$DATABASE_URL" "tf-db")"
+if [[ "$TF_SMTP_HOST" == "localhost" || "$TF_SMTP_HOST" == "127.0.0.1" ]]; then
+  CONTAINER_SMTP_HOST="tf-mailpit"
+else
+  CONTAINER_SMTP_HOST="$TF_SMTP_HOST"
+fi
+
+# Pass through remaining TF_* / AI / payment keys from backend env if set
+# (they are already exported via load_env_file). Ensure empty vars don't
+# produce literal empty --env flags later by handling conditionally.
+
+podman network exists tf-net || podman network create tf-net
+podman volume exists tf_pgdata || podman volume create tf_pgdata
+podman volume exists tf_uploads || podman volume create tf_uploads
+
+# --- build ---------------------------------------------------------------
 
 echo "==> Building images"
-podman build -t tb-backend ./backend
-podman build -t tb-customer ./frontend-customer
-podman build -t tb-courier ./frontend-runner-biker
-podman build -t tb-merchant ./frontend-merchant
+
+echo "---- backend ----"
+podman build -t tf-backend ./backend
+
+echo "---- frontend back-office ----"
+mapfile -t BACK_OFFICE_ARGS < <(build_args_from_env "$BACK_OFFICE_ENV")
+if [[ ${#BACK_OFFICE_ARGS[@]} -gt 0 ]]; then
+  echo "    using ${CUSTOMER_ENV}: ${BACK_OFFICE_ARGS[*]}"
+  podman build "${BACK_OFFICE_ARGS[@]}" -t tf-back-office ./frontend-cms-admin
+else
+  podman build -t tf-back-office ./frontend-cms-admin
+fi
+
+echo "---- frontend customer ----"
+mapfile -t CUSTOMER_ARGS < <(build_args_from_env "$CUSTOMER_ENV")
+if [[ ${#CUSTOMER_ARGS[@]} -gt 0 ]]; then
+  echo "    using ${CUSTOMER_ENV}: ${CUSTOMER_ARGS[*]}"
+  podman build "${CUSTOMER_ARGS[@]}" -t tf-customer ./frontend-customer
+else
+  podman build -t tf-customer ./frontend-customer
+fi
+
+echo "---- frontend courier ----"
+mapfile -t COURIER_ARGS < <(build_args_from_env "$COURIER_ENV")
+if [[ ${#COURIER_ARGS[@]} -gt 0 ]]; then
+  echo "    using ${COURIER_ENV}: ${COURIER_ARGS[*]}"
+  podman build "${COURIER_ARGS[@]}" -t tf-courier ./frontend-runner-biker
+else
+  podman build -t tf-courier ./frontend-runner-biker
+fi
+
+echo "---- frontend merchant ----"
+mapfile -t MERCHANT_ARGS < <(build_args_from_env "$MERCHANT_ENV")
+if [[ ${#MERCHANT_ARGS[@]} -gt 0 ]]; then
+  echo "    using ${MERCHANT_ENV}: ${MERCHANT_ARGS[*]}"
+  podman build "${MERCHANT_ARGS[@]}" -t tf-merchant ./frontend-merchant
+else
+  podman build -t tf-merchant ./frontend-merchant
+fi
+
+# --- run -----------------------------------------------------------------
 
 echo "==> Starting Postgres (PostGIS 18-3.6) + Mailpit"
-podman rm -f tb-db tb-mailpit tb-backend tb-customer tb-courier tb-merchant tb-gateway 2>/dev/null || true
-podman run -d --name tb-db --network tb-net -e POSTGRES_USER=Trackfud -e POSTGRES_PASSWORD=Trackfud -e POSTGRES_DB=Trackfud -p 5432:5432 -v tb_pgdata:/var/lib/postgresql docker.io/postgis/postgis:18-3.6
-podman run -d --name tb-mailpit --network tb-net -p 8025:8025 -p 1025:1025 docker.io/axllent/mailpit:latest
+podman rm -f tf-db tf-mailpit tf-backend tf-customer tf-courier tf-merchant tf-gateway 2>/dev/null || true
+podman run -d --name tf-db --network tf-net \
+  -e POSTGRES_USER="$POSTGRES_USER" \
+  -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+  -e POSTGRES_DB="$POSTGRES_DB" \
+  -p "${DB_PORT}:5432" -v tf_pgdata:/var/lib/postgresql docker.io/postgis/postgis:18-3.6
+podman run -d --name tf-mailpit --network tf-net \
+  -p "${MAILPIT_UI_PORT}:8025" -p "${MAILPIT_SMTP_PORT}:1025" docker.io/axllent/mailpit:latest
 
 echo "==> Waiting for Postgres"
-for i in $(seq 1 30); do
-  if podman exec tb-db pg_isready -U Trackfud >/dev/null 2>&1; then break; fi
+for _ in $(seq 1 30); do
+  if podman exec tf-db pg_isready -U "$POSTGRES_USER" >/dev/null 2>&1; then break; fi
   sleep 2
 done
 
 echo "==> Starting backend + frontends + gateway"
-podman run -d --name tb-backend --network tb-net -e DATABASE_URL=postgres://Trackfud:Trackfud@tb-db:5432/Trackfud?sslmode=disable -e TB_JWT_SECRET=dev-only-change-me-32chars-minimum!! -e TB_SMTP_HOST=tb-mailpit -e TB_DEMO_MODE=true -p 8081:8080 -v tb_uploads:/data/uploads tb-backend
-podman run -d --name tb-customer --network tb-net tb-customer
-podman run -d --name tb-courier --network tb-net tb-courier
-podman run -d --name tb-merchant --network tb-net tb-merchant
-podman run -d --name tb-gateway --network tb-net -p 8000:80 -v "$PWD/gateway/Caddyfile:/etc/caddy/Caddyfile:ro" docker.io/library/caddy:2
+
+# Collect backend -e flags dynamically from loaded env (only set non-empty ones
+# beyond the mandatory remapped hosts). This keeps secrets out of the script.
+# TF_UPLOAD_DIR/TF_CONFIG/TF_MIGRATIONS_DIR are forced to container absolute
+# paths — never forward the host-relative values from .env.
+BACKEND_ENV_FLAGS=(
+  -e "DATABASE_URL=${CONTAINER_DB_URL}"
+  -e "TF_JWT_SECRET=${TF_JWT_SECRET}"
+  -e "TF_SMTP_HOST=${CONTAINER_SMTP_HOST}"
+  -e "TF_SMTP_PORT=${TF_SMTP_PORT}"
+  -e "TF_DEMO_MODE=${TF_DEMO_MODE}"
+  -e "TF_UPLOAD_DIR=/data/uploads"
+  -e "TF_CONFIG=/app/config.yaml"
+  -e "TF_MIGRATIONS_DIR=/app/db/migrations"
+)
+# Optional keys — forward only if present (empty means offline fallback by design)
+for key in TF_GOOGLE_MAPS_KEY TF_PADDLE_WEBHOOK_SECRET TF_MODAL_KEY TF_MODAL_SECRET \
+           TF_META_API_KEY TF_META_BASE_URL TF_META_SPARK_MODEL TF_META_CONTRIBUTOR_MODEL \
+           TF_META_TRANSCRIBE_MODEL TF_META_SAM_MODEL TF_PAYMENTS_PROVIDER TF_ADDR; do
+  val="${!key:-}"
+  if [[ -n "$val" ]]; then
+    BACKEND_ENV_FLAGS+=(-e "${key}=${val}")
+  fi
+done
+
+podman run -d --name tf-backend --network tf-net \
+  "${BACKEND_ENV_FLAGS[@]}" \
+  -p "${BACKEND_PORT}:8080" -v tf_uploads:/data/uploads tf-backend
+podman run -d --name tf-back-office --network tf-net tf-back-office
+podman run -d --name tf-customer --network tf-net tf-customer
+podman run -d --name tf-courier --network tf-net tf-courier
+podman run -d --name tf-merchant --network tf-net tf-merchant
+podman run -d --name tf-gateway --network tf-net -p "${GATEWAY_PORT}:80" -v "$PWD/gateway/Caddyfile:/etc/caddy/Caddyfile:ro" docker.io/library/caddy:2
 
 echo ""
 echo "Trackfud is up:"
-echo "  Customer  http://localhost:8000/customer/"
-echo "  Courier   http://localhost:8000/courier/"
-echo "  Merchant  http://localhost:8000/merchant/"
-echo "  API docs health  http://localhost:8000/api/healthz  (direct: http://localhost:8081/healthz)"
-echo "  Mailpit   http://localhost:8025"
-echo "Logs: podman logs -f tb-backend"
+echo "  CMS Admin http://localhost:${GATEWAY_PORT}/back-office/"
+echo "  Customer  http://localhost:${GATEWAY_PORT}/customer/"
+echo "  Courier   http://localhost:${GATEWAY_PORT}/courier/"
+echo "  Merchant  http://localhost:${GATEWAY_PORT}/merchant/"
+echo "  API docs health  http://localhost:${GATEWAY_PORT}/api/healthz  (direct: http://localhost:${BACKEND_PORT}/healthz)"
+echo "  Mailpit   http://localhost:${MAILPIT_UI_PORT}"
+echo "Logs: podman logs -f tf-backend"

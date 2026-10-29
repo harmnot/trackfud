@@ -1,7 +1,7 @@
-# Trackfud defaults (Milestone B0+B1). Env vars override: TB_<SECTION>_<KEY> or explicit vars in internal/config.
+# Trackfud defaults (Milestone B0+B1). Env vars override: TF_<SECTION>_<KEY> or explicit vars in internal/config.
 server:
     addr: ":8080"
-    demo_mode: true
+    demo_mode: false
     public_base_url: "http://localhost:8000"
 auth:
     access_ttl_seconds: 900
@@ -72,3 +72,10 @@ health:
 payments:
     provider: paddle_sandbox
     sandbox_only: true
+# AI model serving (B6): Modal-hosted chat/text by default.
+# Credentials are env-only (TF_MODAL_KEY / TF_MODAL_SECRET) and never go here.
+# spark_model MUST equal the model id served on the Modal endpoint — confirm with:
+#   curl -s $TF_META_BASE_URL/v1/models -H "Modal-Key: $TF_MODAL_KEY" -H "Modal-Secret: $TF_MODAL_SECRET"
+ai:
+    base_url: "https://muhammad099x-work--ep-muse-spark-open-816b-a42b-server.us-west.modal.direct"
+    spark_model: "muse-spark-open"

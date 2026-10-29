@@ -1,16 +1,40 @@
 {
   "app": {
+    "brand": "Stride & Earn",
     "tagline": "Berlari atau berbasikal. Dibayar sambil bergerak.",
     "safety": "Tiada penalti menolak tawaran."
   },
   "nav": {
-    "onboarding": "Pendaftaran",
+    "onboarding": "Jadi Rakan",
     "checklist": "Senarai semak",
     "fitness": "Ujian kecergasan",
-    "status": "Status",
+    "status": "Akaun",
     "run": "Lari",
     "delivery": "Hantar",
     "wallet": "Dompet"
+  },
+  "account": {
+    "title": "Akaun Stride & Earn anda",
+    "personal": "Data peribadi",
+    "name": "Nama penuh",
+    "email": "Emel",
+    "phone": "Nombor telefon",
+    "address": "Alamat",
+    "notSet": "Belum ditetapkan",
+    "modeRunner": "Pelari",
+    "modeBiker": "Penunggang",
+    "partnerTitle": "Dibayar sambil berlari atau berbasikal",
+    "partnerBody": "Jadi rakan Trackfud dan dibayar untuk hantaran yang sesuai dengan latihan anda. Lengkapkan borang rakan dan ujian kecergasan — pasukan kami menyemak setiap permohonan.",
+    "becomePartner": "Jadi Rakan",
+    "continuePartner": "Teruskan permohonan rakan",
+    "partnerPending": "Permohonan sedang disemak — kami akan maklumkan selepas pasukan memutuskan.",
+    "partnerApproved": "Anda rakan Trackfud. Hantaran dan pendapatan telah dibuka.",
+    "partnerRejected": "Permohonan terakhir tidak diluluskan. Semak sebab di bawah dan mohon semula apabila sedia.",
+    "startTracking": "Mula jejak larian atau kayuhan",
+    "fitnessCta": "Ambil ujian kecergasan",
+    "walletCta": "Buka dompet",
+    "deliveryLocked": "Hantaran dibuka selepas permohonan rakan diluluskan. Penjejakan kekal percuma untuk semua.",
+    "addressLine": "{city}, {country}"
   },
   "run": {
     "setupTitle": "Mula sesi",
@@ -81,7 +105,10 @@
     "history": "Sejarah",
     "empty": "Belum ada pendapatan — ayo berlari.",
     "live": "Baki dompet live.",
-    "offline": "Offline — direkod di peranti ini sahaja."
+    "offline": "Offline — direkod di peranti ini sahaja.",
+    "gpxExport": "Eksport larian terakhir (.gpx)",
+    "gpxEmpty": "Tiada titik GPS untuk sesi terakhir.",
+    "gpxSaved": "GPX dimuat turun — import ke Strava."
   },
   "coach": {
     "title": "Jurulatih minggu ini",
@@ -98,7 +125,7 @@
     "logout": "Log keluar"
   },
   "onboard": {
-    "title": "Jadi penghantar",
+    "title": "Jadi Rakan",
     "mode": "Saya menghantar secara",
     "runner": "Berlari",
     "biker": "Basikal kayuh sahaja",
@@ -107,7 +134,18 @@
     "selfie": "Swafoto (peribadi)",
     "bikePhoto": "Foto basikal (peribadi)",
     "saveDraft": "Draf disimpan automatik.",
-    "uploaded": "Dimuat naik ✓"
+    "uploaded": "Dimuat naik ✓",
+    "birthDate": "Tarikh lahir",
+    "nationality": "Kewarganegaraan",
+    "city": "Bandar",
+    "country": "Negara",
+    "emergencyName": "Nama kontak kecemasan",
+    "emergencyPhone": "Telefon kontak kecemasan (E.164)",
+    "idType": "Jenis ID (cth. KTP)",
+    "idNumber": "Nombor ID",
+    "bagLiters": "Saiz beg (liter)",
+    "bikeType": "Jenis basikal",
+    "profileHint": "Butiran ini masuk ke profil rakan untuk pasukan semakan."
   },
   "check": {
     "title": "Senarai semak",
@@ -132,8 +170,10 @@
     "result": "Keputusan"
   },
   "status": {
-    "title": "Status permohonan",
-    "none": "Belum ada permohonan."
+    "title": "Akaun",
+    "none": "Belum ada permohonan rakan — penjejakan percuma. Mohon apabila ingin dibayar.",
+    "runnerLabel": "Pelari — Stride & Earn",
+    "bikerLabel": "Penunggang — Stride & Earn"
   },
   "voice": {
     "hold": "Tahan untuk bercakap",
@@ -151,8 +191,7 @@
   },
   "staff": {
     "title": "Mod staf",
-    "intro": "Dijemput restoran? Masukkan kod jemputan — tanpa ujian kecergasan, hanya hantaran sandaran.",
-    "invite": "Kod jemputan",
+    "intro": "Dijemput restoran anda? Pilih di bawah — tanpa ujian kecergasan, hanya hantaran sandaran.",
     "name": "Nama anda",
     "travel": "Cara menghantar",
     "travel_foot": "Jalan kaki",
@@ -160,14 +199,18 @@
     "travel_own": "Cara sendiri",
     "enter": "Mula mod staf",
     "exit": "Keluar mod staf",
-    "badCode": "Masukkan kod jemputan restoran (6+ huruf/angka).",
     "badName": "Masukkan nama anda.",
     "noTest": "Mod staf: tanpa ujian kecergasan — hanya hantaran sandaran.",
     "fallbackOnly": "Hanya tawaran sandaran — pelari dan penunggang didahulukan.",
     "onDuty": "Mod staf · {name} — hanya hantaran sandaran.",
     "onDutyShort": "Mod staf aktif — hanya sandaran, tanpa ujian.",
     "delivering": "Hantaran staf · {travel} · dikesan live.",
-    "demoMerchant": "Restoran Demo"
+    "restaurant": "Restoran",
+    "noInvite": "Belum ada jemputan",
+    "noInviteBody": "Minta restoran anda menjemput emel ini dalam aplikasi Merchant (halaman Staff). Kemudian kembali ke sini dan mula syif.",
+    "joinHint": "Log masuk dengan emel yang sama yang dijemput restoran. Jemputan melalui emel — tiada kod.",
+    "notAllowed": "Akaun ini tiada dalam senarai staff restoran itu.",
+    "needDeliver": "Entri itu belum boleh menghantar — minta pemilik mengaktifkan “Can deliver”."
   },
   "tracks": {
     "title": "Laluan tersimpan",
@@ -196,6 +239,9 @@
   "chat": {
     "title": "Chat",
     "offline": "Utas live setiap hantaran — ketik Terjemah untuk terjemahan server.",
+    "noDelivery": "Tiada hantaran aktif lagi",
+    "noDeliveryBody": "Chat dengan pelanggan dibuka sebaik hantaran diberikan kepada anda. Mula sesi untuk menerima tawaran.",
+    "errorLoad": "Mesej tidak dapat dimuatkan. Semak sambungan dan cuba lagi.",
     "empty": "Tiada mesej lagi — sapa dengan balasan pantas.",
     "quick": "Balasan pantas",
     "placeholder": "Mesej…",
@@ -215,11 +261,13 @@
     "count": "{count} hantaran dinilai",
     "tags": "Kata pelanggan",
     "demo": "Contoh ringkasan sehingga rating live tiba",
+    "errorLoad": "Rating tidak dapat dimuatkan. Semak sambungan dan cuba lagi.",
     "none": "Belum ada hantaran dinilai — bintang anda muncul di sini."
   },
   "common": {
     "loading": "Memuatkan…",
     "error": "Ralat",
+    "retry": "Cuba lagi",
     "updateReady": "Versi baharu sedia.",
     "reload": "Muat semula"
   }

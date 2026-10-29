@@ -32,13 +32,23 @@ type MetaTranscriber struct {
 	cli openai.Client
 }
 
-// NewMetaTranscriber builds the live transcriber.
+// NewMetaTranscriber builds the live transcriber. Modal proxy headers ride
+// along when the pair is set; the Modal endpoint serves chat only, so audio
+// there fails into UpstreamError and the caller falls back to the typed
+// transcript. Live transcription needs the Meta-direct APIKey.
 func NewMetaTranscriber(cfg Config) *MetaTranscriber {
 	cfg = cfg.withDefaults()
-	return &MetaTranscriber{cfg: cfg, cli: openai.NewClient(
+	opts := []option.RequestOption{
 		option.WithBaseURL(cfg.BaseURL),
 		option.WithAPIKey(cfg.APIKey),
-	)}
+	}
+	if cfg.UsesModal() {
+		opts = append(opts,
+			option.WithHeader("Modal-Key", cfg.ModalKey),
+			option.WithHeader("Modal-Secret", cfg.ModalSecret),
+		)
+	}
+	return &MetaTranscriber{cfg: cfg, cli: openai.NewClient(opts...)}
 }
 
 // Transcribe implements Transcriber.
@@ -50,7 +60,7 @@ func (t *MetaTranscriber) Transcribe(ctx context.Context, pcm []byte, langHint s
 		return "", rec, ErrNoTranscript
 	}
 	wav := PCMToWAV(pcm, 24000)
-	f, err := os.CreateTemp("", "tb-voice-*.wav")
+	f, err := os.CreateTemp("", "tf-voice-*.wav")
 	if err != nil {
 		return "", rec, err
 	}

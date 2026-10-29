@@ -19,7 +19,7 @@ supporter tone). No card data in app (Paddle overlay only).
 - App bootstrap (`main.tsx`, router, layouts, auth context, i18n provider),
   installable manifest (`scope`/`start_url` = `/customer/`), `sw.js`
   (precache shell, network-first API, cache-first images, never private API).
-- Auth screens + one-click demo login (demo mode); `X-TB-App: customer`,
+- Auth screens; `X-TF-App: customer`,
   token-in-memory, per-app storage keys (`tb:customer:*`); WS ticket connect.
 - Delivery location (GPS + Places search + pin adjust + note); restaurant list
   sorted by distance with availability badge (runners nearby / staff only);

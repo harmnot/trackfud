@@ -112,19 +112,21 @@ export function OrderPage() {
     <Page>
       <p className="tb-h2">{t('track.orderCode').replace('{code}', order.code)}</p>
       <h1 className="tb-display mt-1" aria-live="polite">{t(`track.s_${order.status}`)}</h1>
-      <div className="mt-3"><StatusTimeline status={order.status} /></div>
-      {pickup && drop && (
-        <div className="mt-3">
-          <LiveMap
-            pickup={pickup}
-            dropoff={drop}
-            courier={courierDot}
-            progress={progressFor(order.status)}
-            etaText={etaText({ windowEnd: order.window_end, readyAt: order.ready_at_est, t })}
-            statusText={t(`track.d_${order.status === 'completed' ? 'delivered' : order.status}`)}
-          />
-        </div>
-      )}
+      <div className="tb-split mt-3">
+        <div><StatusTimeline status={order.status} /></div>
+        {pickup && drop && (
+          <div>
+            <LiveMap
+              pickup={pickup}
+              dropoff={drop}
+              courier={courierDot}
+              progress={progressFor(order.status)}
+              etaText={etaText({ windowEnd: order.window_end, readyAt: order.ready_at_est, t })}
+              statusText={t(`track.d_${order.status === 'completed' ? 'delivered' : order.status}`)}
+            />
+          </div>
+        )}
+      </div>
       <div className="mt-3">
         <CourierCard courier={courier} unit={unitFor(i18n.language)} />
       </div>

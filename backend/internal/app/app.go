@@ -102,6 +102,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/customer/restaurants/{id}/menu", s.getMenu)
 	mux.HandleFunc("GET /v1/customer/addresses", s.auth(s.listAddresses))
 	mux.HandleFunc("POST /v1/customer/addresses", s.auth(s.createAddress))
+	mux.HandleFunc("PATCH /v1/customer/addresses/{id}", s.auth(s.updateAddress))
+	mux.HandleFunc("DELETE /v1/customer/addresses/{id}", s.auth(s.deleteAddress))
+	mux.HandleFunc("POST /v1/customer/addresses/{id}/default", s.auth(s.setDefaultAddress))
 	mux.HandleFunc("GET /v1/courier/application", s.auth(s.getApplication))
 	mux.HandleFunc("PUT /v1/courier/application", s.auth(s.saveApplication))
 	mux.HandleFunc("POST /v1/courier/application/submit", s.auth(s.submitApplication))
@@ -126,6 +129,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/courier/deliveries/{id}/messages", s.auth(s.listCourierMessages))
 	mux.HandleFunc("POST /v1/courier/deliveries/{id}/messages", s.auth(s.postCourierMessage))
 	mux.HandleFunc("POST /v1/courier/staff/shift", s.auth(s.staffShift))
+	mux.HandleFunc("GET /v1/courier/staff/memberships", s.auth(s.listMemberships))
 	mux.HandleFunc("GET /v1/courier/staff/offers", s.auth(s.listStaffOffers))
 	mux.HandleFunc("POST /v1/courier/staff/offers/{id}/accept", s.auth(s.acceptStaffOffer))
 	mux.HandleFunc("POST /v1/customer/orders/{id}/delivery-choice", s.auth(s.deliveryChoice))
@@ -137,6 +141,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/admin/courier-applications", s.auth(s.listApplications))
 	mux.HandleFunc("POST /v1/admin/courier-applications/{user_id}/approve", s.auth(func(w http.ResponseWriter, r *http.Request) { s.decideApplication(w, r, true) }))
 	mux.HandleFunc("POST /v1/admin/courier-applications/{user_id}/reject", s.auth(func(w http.ResponseWriter, r *http.Request) { s.decideApplication(w, r, false) }))
+	mux.HandleFunc("GET /v1/admin/courier-applications/{user_id}", s.auth(s.getApplicationDetail))
+	mux.HandleFunc("GET /v1/admin/merchants", s.auth(s.listMerchants))
+	mux.HandleFunc("GET /v1/admin/merchants/{id}", s.auth(s.getMerchantDetail))
+	mux.HandleFunc("POST /v1/admin/merchants/{id}/approve", s.auth(func(w http.ResponseWriter, r *http.Request) { s.decideMerchant(w, r, true) }))
+	mux.HandleFunc("POST /v1/admin/merchants/{id}/reject", s.auth(func(w http.ResponseWriter, r *http.Request) { s.decideMerchant(w, r, false) }))
 	mux.HandleFunc("GET /v1/admin/couriers/{user_id}/sanctions", s.auth(s.listSanctions))
 	mux.HandleFunc("POST /v1/admin/couriers/{user_id}/sanctions", s.auth(s.sanctionCourier))
 	mux.HandleFunc("POST /v1/merchant/merchants", s.auth(s.createMerchant))
@@ -202,7 +211,7 @@ func (s *Server) withLog(next http.Handler) http.Handler {
 		if o := r.Header.Get("Origin"); strings.HasPrefix(o, "http://localhost:") || strings.HasPrefix(o, "http://127.0.0.1:") {
 			w.Header().Set("Access-Control-Allow-Origin", o)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-TB-App, Idempotency-Key")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-TF-App, Idempotency-Key")
 			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
 		}
 		if r.Method == http.MethodOptions {
@@ -319,7 +328,7 @@ func (s *Server) rate(next http.HandlerFunc) http.HandlerFunc {
 func shaHex(s string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(s))) }
 
 func appOf(r *http.Request, bodyApp string) string {
-	if v := r.Header.Get("X-TB-App"); v != "" {
+	if v := r.Header.Get("X-TF-App"); v != "" {
 		return v
 	}
 	if bodyApp != "" {

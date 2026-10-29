@@ -32,6 +32,7 @@ import {
     img,
 } from "./components/ui";
 import { useStaff } from "./features/staff/staffStore";
+import { StatusPage } from "./pages/StatusPage";
 import { RunSetupPage } from "./pages/RunSetupPage";
 import { RunModePage } from "./pages/RunModePage";
 import { DeliveryPage } from "./pages/DeliveryPage";
@@ -170,11 +171,11 @@ function Shell({
             <header className="tb-topbar">
                 <div className="tb-topbar-inner">
                     <Link
-                        to="/onboarding"
+                        to="/run-setup"
                         className="tb-hello"
                         style={{ textDecoration: "none", color: "inherit" }}
                     >
-                        <small>Trackfud · Courier</small>
+                        <small>Trackfud · {t("app.brand")}</small>
                         <strong>{hello}</strong>
                     </Link>
                     <span className="flex items-center gap-2">
@@ -276,7 +277,7 @@ function AuthPage({ mode }: { mode: "login" | "signup" }) {
                 body: JSON.stringify(body),
             });
             setSession({ accessToken: d.access_token, user: d.user });
-            nav("/onboarding");
+            nav("/run-setup");
         } catch (e) {
             setErr(e instanceof ApiError ? e.message : t("common.error"));
         } finally {
@@ -304,7 +305,12 @@ function AuthPage({ mode }: { mode: "login" | "signup" }) {
                         e.preventDefault();
                         void submit(
                             mode === "login" ? "/auth/login" : "/auth/signup",
-                            { email, password, name, role: "courier" },
+                            // Ordinary Stride & Earn account: no partner role
+                            // at signup. Partner unlocks after onboarding +
+                            // fitness test + CMS approval (see /onboarding).
+                            mode === "login"
+                                ? { email, password }
+                                : { email, password, name },
                         );
                     }}
                 >
@@ -377,6 +383,34 @@ type Draft = {
     idFileId: string;
     selfieFileId: string;
     bikeFileId: string;
+    birthDate: string;
+    nationality: string;
+    city: string;
+    country: string;
+    emergencyName: string;
+    emergencyPhone: string;
+    idDocType: string;
+    idNumber: string;
+    bagLiters: string;
+    bikeType: string;
+};
+
+const EMPTY_DRAFT: Draft = {
+    fullName: "",
+    phone: "",
+    idFileId: "",
+    selfieFileId: "",
+    bikeFileId: "",
+    birthDate: "",
+    nationality: "",
+    city: "",
+    country: "",
+    emergencyName: "",
+    emergencyPhone: "",
+    idDocType: "",
+    idNumber: "",
+    bagLiters: "",
+    bikeType: "city",
 };
 
 function Onboarding() {
@@ -384,25 +418,12 @@ function Onboarding() {
     const [mode, setMode] = useState<"runner" | "biker">("runner");
     const [draft, setDraft] = useState<Draft>(() => {
         try {
-            return (
-                (JSON.parse(
-                    localStorage.getItem("tb:courier:draft") ?? "null",
-                ) as Draft) ?? {
-                    fullName: "",
-                    phone: "",
-                    idFileId: "",
-                    selfieFileId: "",
-                    bikeFileId: "",
-                }
-            );
+            const saved = JSON.parse(
+                localStorage.getItem("tb:courier:draft") ?? "null",
+            ) as Partial<Draft> | null;
+            return { ...EMPTY_DRAFT, ...(saved ?? {}) };
         } catch {
-            return {
-                fullName: "",
-                phone: "",
-                idFileId: "",
-                selfieFileId: "",
-                bikeFileId: "",
-            };
+            return { ...EMPTY_DRAFT };
         }
     });
     const [msg, setMsg] = useState("");
@@ -417,6 +438,42 @@ function Onboarding() {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ mode, draft }),
+            }).catch(() => undefined);
+            // Partner profile powers CMS review + submit validation.
+            void api("/courier/profile", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    mode,
+                    legal_name: draft.fullName,
+                    birth_date: draft.birthDate,
+                    nationality: draft.nationality,
+                    address: { city: draft.city, country: draft.country },
+                    emergency_contact: {
+                        name: draft.emergencyName,
+                        phone: draft.emergencyPhone,
+                    },
+                    phone: draft.phone,
+                    id_doc_type: draft.idDocType,
+                    id_number: draft.idNumber,
+                    id_front_file_id: draft.idFileId,
+                    id_back_file_id: draft.idFileId,
+                    selfie_file_id: draft.selfieFileId,
+                    bike:
+                        mode === "biker"
+                            ? {
+                                  type: draft.bikeType,
+                                  photo_file_id: draft.bikeFileId,
+                                  no_motor: true,
+                              }
+                            : {},
+                    bag_liters: parseInt(draft.bagLiters, 10) || 0,
+                    consents: {
+                        terms: { version: "v1", accepted_at: new Date().toISOString() },
+                        privacy: { version: "v1", accepted_at: new Date().toISOString() },
+                        location: { version: "v1", accepted_at: new Date().toISOString() },
+                    },
+                }),
             }).catch(() => undefined);
         }, 600);
         return () => clearTimeout(timer);
@@ -540,6 +597,43 @@ function Onboarding() {
                         </Field>
                     </Item>
                     <Item index={2}>
+                        <p className="tb-sub">{t("onboard.profileHint")}</p>
+                        <div className="flex flex-col gap-3 mt-2">
+                            <Field label={t("onboard.birthDate")}>
+                                <input className="tb-input" type="date" value={draft.birthDate} onChange={(e) => setDraft({ ...draft, birthDate: e.target.value })} />
+                            </Field>
+                            <Field label={t("onboard.nationality")}>
+                                <input className="tb-input" value={draft.nationality} onChange={(e) => setDraft({ ...draft, nationality: e.target.value })} />
+                            </Field>
+                            <Field label={t("onboard.city")}>
+                                <input className="tb-input" value={draft.city} onChange={(e) => setDraft({ ...draft, city: e.target.value })} />
+                            </Field>
+                            <Field label={t("onboard.country")}>
+                                <input className="tb-input" value={draft.country} onChange={(e) => setDraft({ ...draft, country: e.target.value })} />
+                            </Field>
+                            <Field label={t("onboard.emergencyName")}>
+                                <input className="tb-input" value={draft.emergencyName} onChange={(e) => setDraft({ ...draft, emergencyName: e.target.value })} />
+                            </Field>
+                            <Field label={t("onboard.emergencyPhone")}>
+                                <input className="tb-input" placeholder="+62812…" value={draft.emergencyPhone} onChange={(e) => setDraft({ ...draft, emergencyPhone: e.target.value })} />
+                            </Field>
+                            <Field label={t("onboard.idType")}>
+                                <input className="tb-input" value={draft.idDocType} onChange={(e) => setDraft({ ...draft, idDocType: e.target.value })} />
+                            </Field>
+                            <Field label={t("onboard.idNumber")}>
+                                <input className="tb-input" value={draft.idNumber} onChange={(e) => setDraft({ ...draft, idNumber: e.target.value })} />
+                            </Field>
+                            <Field label={t("onboard.bagLiters")}>
+                                <input className="tb-input" inputMode="numeric" value={draft.bagLiters} onChange={(e) => setDraft({ ...draft, bagLiters: e.target.value })} />
+                            </Field>
+                            {mode === "biker" && (
+                                <Field label={t("onboard.bikeType")}>
+                                    <input className="tb-input" value={draft.bikeType} onChange={(e) => setDraft({ ...draft, bikeType: e.target.value })} placeholder="city" />
+                                </Field>
+                            )}
+                        </div>
+                    </Item>
+                    <Item index={3}>
                         <p className="tb-label">{t("onboard.idPhoto")}</p>
                         <FileUpload
                             title="Drop your ID photo"
@@ -554,7 +648,7 @@ function Onboarding() {
                             onClear={() => clearFile("idFileId")}
                         />
                     </Item>
-                    <Item index={3}>
+                    <Item index={4}>
                         <p className="tb-label">{t("onboard.selfie")}</p>
                         <FileUpload
                             title="Drop your selfie"
@@ -570,7 +664,7 @@ function Onboarding() {
                         />
                     </Item>
                     {mode === "biker" && (
-                        <Item index={4}>
+                        <Item index={5}>
                             <p className="tb-label">{t("onboard.bikePhoto")}</p>
                             <FileUpload
                                 title="Drop your bike photo"
@@ -988,98 +1082,89 @@ function Fitness() {
     );
 }
 
-function StatusPage() {
-    const { t } = useTranslation();
-    const q = useQuery({
-        queryKey: ["app-status"],
-        queryFn: () =>
-            api<{
-                status: string;
-                mode: string;
-                reject_reason?: string;
-                fitness?: { passed: boolean };
-            }>("/courier/application"),
-    });
-    return (
-        <Shell hello="Journey">
-            <Page>
-                <h1 className="tb-display">{t("status.title")}</h1>
-                <div className="tb-hero mt-3" style={{ minHeight: 140 }}>
-                    <img src={img("mode-bike.jpg")} alt="" />
-                    <div className="tb-hero-body">
-                        <span className="tb-kicker">
-                            {q.data?.status ?? "…"}
-                        </span>
-                        <p
-                            className="tb-hero-title"
-                            style={{ fontSize: "1.3rem" }}
-                        >
-                            {q.data?.mode === "biker"
-                                ? "Pedal bike courier"
-                                : "Runner courier"}
-                        </p>
-                    </div>
-                </div>
-                {q.data && q.data.status !== "none" && (
-                    <div className="tb-stats mt-3">
-                        <Stat
-                            value={q.data.fitness?.passed ? "✓" : "—"}
-                            label="Fitness"
-                        />
-                        <Stat
-                            value={q.data.mode === "biker" ? "5k" : "2k"}
-                            label="Test"
-                        />
-                        <Stat
-                            value={q.data.status === "approved" ? "✓" : "…"}
-                            label="Approved"
-                        />
-                    </div>
-                )}
-                {q.data?.status === "none" && (
-                    <div className="tb-card mt-3">{t("status.none")}</div>
-                )}
-                {q.data?.reject_reason && (
-                    <div className="mt-3">
-                        <Note tone="error">{q.data.reject_reason}</Note>
-                    </div>
-                )}
-                <div className="mt-3">
-                    <Button
-                        variant="danger"
-                        block
-                        onClick={() => {
-                            setSession(null);
-                            location.href = "/courier/login";
-                        }}
-                    >
-                        {t("auth.logout")}
-                    </Button>
-                </div>
-            </Page>
-        </Shell>
-    );
-}
 
 export default function App() {
     return (
         <Routes>
-            <Route path="/" element={<Navigate to="/onboarding" replace />} />
+            <Route path="/" element={<Navigate to="/run-setup" replace />} />
             <Route path="/login" element={<AuthPage mode="login" />} />
             <Route path="/signup" element={<AuthPage mode="signup" />} />
             <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/checklist" element={<Checklist />} />
             <Route path="/fitness" element={<Fitness />} />
-            <Route path="/status" element={<StatusPage />} />
-            <Route path="/run-setup" element={<RunSetupPage />} />
-            <Route path="/run" element={<RunModePage />} />
-            <Route path="/delivery" element={<DeliveryPage />} />
-            <Route path="/wallet" element={<WalletPage />} />
-            <Route path="/staff" element={<StaffPage />} />
-            <Route path="/tracks" element={<TracksPage />} />
-            <Route path="/chat" element={<ChatPage />} />
-            <Route path="/ratings" element={<RatingsPage />} />
-            <Route path="*" element={<Navigate to="/onboarding" replace />} />
+            <Route
+                path="/status"
+                element={
+                    <Shell hello="Account">
+                        <StatusPage />
+                    </Shell>
+                }
+            />
+            <Route
+                path="/run-setup"
+                element={
+                    <Shell hello="Start">
+                        <RunSetupPage />
+                    </Shell>
+                }
+            />
+            <Route
+                path="/run"
+                element={
+                    <Shell hello="Session">
+                        <RunModePage />
+                    </Shell>
+                }
+            />
+            <Route
+                path="/delivery"
+                element={
+                    <Shell hello="Delivery">
+                        <DeliveryPage />
+                    </Shell>
+                }
+            />
+            <Route
+                path="/wallet"
+                element={
+                    <Shell hello="Wallet">
+                        <WalletPage />
+                    </Shell>
+                }
+            />
+            <Route
+                path="/staff"
+                element={
+                    <Shell hello="Staff">
+                        <StaffPage />
+                    </Shell>
+                }
+            />
+            <Route
+                path="/tracks"
+                element={
+                    <Shell hello="Tracks">
+                        <TracksPage />
+                    </Shell>
+                }
+            />
+            <Route
+                path="/chat"
+                element={
+                    <Shell hello="Chat">
+                        <ChatPage />
+                    </Shell>
+                }
+            />
+            <Route
+                path="/ratings"
+                element={
+                    <Shell hello="Ratings">
+                        <RatingsPage />
+                    </Shell>
+                }
+            />
+            <Route path="*" element={<Navigate to="/run-setup" replace />} />
         </Routes>
     );
 }

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -31,29 +32,44 @@ func (s *Server) listRestaurants(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&id, &name, &cur, &tz, &addr, &prep, &dist, &mlat, &mlng); err != nil {
 			continue
 		}
-		// availability heuristic for M1: approved merchants with staff can always serve; runners badge seeded by name hash parity replaced by real courier count
-		var couriers int
-		_ = s.db.QueryRow(r.Context(), `SELECT count(*) FROM courier_applications WHERE status='approved'`).Scan(&couriers)
-		badge := "staff_only"
-		if couriers > 0 {
-			badge = "runners_nearby"
-		}
+		// availability heuristic for M1: approved merchants with staff can always serve.
+		badge := s.deliveryBadge(r.Context())
 		out = append(out, map[string]any{"id": id, "name": name, "currency": cur, "timezone": tz, "address": addr, "prep_minutes": prep, "distance_m": dist, "lat": mlat, "lng": mlng, "availability": badge, "delivery_window": "30-60 min"})
 	}
 	writeJSON(w, 200, map[string]any{"restaurants": out})
 }
 
+// deliveryBadge reports how a merchant can serve right now: runners_nearby
+// when any approved courier exists, else staff_only (staff fallback always
+// applies to approved merchants with staff). Shared by list and detail.
+func (s *Server) deliveryBadge(ctx context.Context) string {
+	var couriers int
+	_ = s.db.QueryRow(ctx, `SELECT count(*) FROM courier_applications WHERE status='approved'`).Scan(&couriers)
+	if couriers > 0 {
+		return "runners_nearby"
+	}
+	return "staff_only"
+}
+
 func (s *Server) getRestaurant(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	lat, _ := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
+	lng, _ := strconv.ParseFloat(r.URL.Query().Get("lng"), 64)
 	var name, cur, tz, addr, note string
 	var prep int
-	var lat, lng float64
-	err := s.db.QueryRow(r.Context(), `SELECT name,currency,timezone,address,pickup_note,prep_minutes, ST_Y(location::geometry), ST_X(location::geometry) FROM merchants WHERE id=$1`, id).Scan(&name, &cur, &tz, &addr, &note, &prep, &lat, &lng)
+	var mlat, mlng, dist float64
+	err := s.db.QueryRow(r.Context(), `SELECT name,currency,timezone,address,pickup_note,prep_minutes, ST_Y(location::geometry), ST_X(location::geometry),
+		ST_Distance(location, ST_SetSRID(ST_MakePoint($2,$3),4326)::geography) FROM merchants WHERE id=$1`, id, lng, lat).Scan(&name, &cur, &tz, &addr, &note, &prep, &mlat, &mlng, &dist)
 	if err != nil {
 		problem(w, 404, "Not found", "restaurant not found")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"id": id, "name": name, "currency": cur, "timezone": tz, "address": addr, "pickup_note": note, "prep_minutes": prep, "lat": lat, "lng": lng})
+	out := map[string]any{"id": id, "name": name, "currency": cur, "timezone": tz, "address": addr,
+		"pickup_note": note, "prep_minutes": prep, "lat": mlat, "lng": mlng, "availability": s.deliveryBadge(r.Context())}
+	if lat != 0 || lng != 0 {
+		out["distance_m"] = dist
+	}
+	writeJSON(w, 200, out)
 }
 
 func (s *Server) getMenu(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +104,7 @@ func (s *Server) getMenu(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listAddresses(w http.ResponseWriter, r *http.Request) {
 	c := claims(r)
-	rows, err := s.db.Query(r.Context(), `SELECT id,label,lat,lng,note FROM customer_addresses WHERE user_id=$1 ORDER BY created_at DESC`, c.Sub)
+	rows, err := s.db.Query(r.Context(), `SELECT id,label,address,lat,lng,note,is_default,created_at,updated_at FROM customer_addresses WHERE user_id=$1 ORDER BY is_default DESC, created_at DESC`, c.Sub)
 	if err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
@@ -96,35 +112,218 @@ func (s *Server) listAddresses(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
-		var id, label, note string
+		var id, label, addr, note string
 		var lat, lng float64
-		_ = rows.Scan(&id, &label, &lat, &lng, &note)
-		out = append(out, map[string]any{"id": id, "label": label, "lat": lat, "lng": lng, "note": note})
+		var def bool
+		var created, updated time.Time
+		if err := rows.Scan(&id, &label, &addr, &lat, &lng, &note, &def, &created, &updated); err != nil {
+			continue
+		}
+		out = append(out, addressView(id, label, addr, lat, lng, note, def, created, updated))
 	}
 	writeJSON(w, 200, map[string]any{"addresses": out})
 }
 
+// addressView renders one address row in wire shape (ISO-8601 UTC times,
+// matching what the customer PWA parseAddress expects).
+func addressView(id, label, addr string, lat, lng float64, note string, def bool, created, updated time.Time) map[string]any {
+	return map[string]any{"id": id, "label": label, "address": addr, "lat": lat, "lng": lng,
+		"note": note, "is_default": def,
+		"created_at": created.UTC().Format(time.RFC3339),
+		"updated_at": updated.UTC().Format(time.RFC3339)}
+}
+
+// validateAddressBody enforces dispatch-grade pins plus UI-sized text.
+func validateAddressBody(label string, lat, lng float64, note, addr string) string {
+	if strings.TrimSpace(label) == "" {
+		return "label is required (e.g. Home, Office)"
+	}
+	if len(label) > 60 {
+		return "label must be 60 characters or fewer"
+	}
+	if lat < -90 || lat > 90 || lng < -180 || lng > 180 || (lat == 0 && lng == 0) {
+		return "a valid delivery pin (lat/lng) is required"
+	}
+	if len(note) > 500 {
+		return "note must be 500 characters or fewer"
+	}
+	if len(addr) > 500 {
+		return "address must be 500 characters or fewer"
+	}
+	return ""
+}
+
+type addressBody struct {
+	Label     string  `json:"label"`
+	Address   string  `json:"address"`
+	Lat       float64 `json:"lat"`
+	Lng       float64 `json:"lng"`
+	Note      string  `json:"note"`
+	IsDefault *bool   `json:"is_default"`
+}
+
 func (s *Server) createAddress(w http.ResponseWriter, r *http.Request) {
 	c := claims(r)
-	var b struct {
-		Label string  `json:"label"`
-		Lat   float64 `json:"lat"`
-		Lng   float64 `json:"lng"`
-		Note  string  `json:"note"`
-	}
+	var b addressBody
 	if !decode(w, r, &b) {
 		return
 	}
-	if b.Label == "" {
+	if strings.TrimSpace(b.Label) == "" {
 		b.Label = "Home"
 	}
-	var id string
-	err := s.db.QueryRow(r.Context(), `INSERT INTO customer_addresses(user_id,label,lat,lng,note) VALUES($1,$2,$3,$4,$5) RETURNING id`, c.Sub, b.Label, b.Lat, b.Lng, b.Note).Scan(&id)
+	if msg := validateAddressBody(b.Label, b.Lat, b.Lng, b.Note, b.Address); msg != "" {
+		problem(w, 400, "Validation failed", msg)
+		return
+	}
+	ctx := r.Context()
+	var count int
+	_ = s.db.QueryRow(ctx, `SELECT count(*) FROM customer_addresses WHERE user_id=$1`, c.Sub).Scan(&count)
+	wantDefault := count == 0
+	if b.IsDefault != nil {
+		wantDefault = *b.IsDefault
+	}
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
 	}
-	writeJSON(w, 201, map[string]any{"id": id, "label": b.Label, "lat": b.Lat, "lng": b.Lng, "note": b.Note})
+	defer tx.Rollback(ctx)
+	if wantDefault {
+		if _, err := tx.Exec(ctx, `UPDATE customer_addresses SET is_default=false, updated_at=now() WHERE user_id=$1 AND is_default`, c.Sub); err != nil {
+			problem(w, 500, "Server error", err.Error())
+			return
+		}
+	}
+	var id string
+	var created, updated time.Time
+	err = tx.QueryRow(ctx, `INSERT INTO customer_addresses(user_id,label,address,lat,lng,note,is_default) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id, created_at, updated_at`,
+		c.Sub, strings.TrimSpace(b.Label), strings.TrimSpace(b.Address), b.Lat, b.Lng, b.Note, wantDefault).Scan(&id, &created, &updated)
+	if err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	writeJSON(w, 201, addressView(id, strings.TrimSpace(b.Label), strings.TrimSpace(b.Address), b.Lat, b.Lng, b.Note, wantDefault, created, updated))
+}
+
+func (s *Server) updateAddress(w http.ResponseWriter, r *http.Request) {
+	c := claims(r)
+	id := r.PathValue("id")
+	var b addressBody
+	if !decode(w, r, &b) {
+		return
+	}
+	if strings.TrimSpace(b.Label) == "" {
+		b.Label = "Home"
+	}
+	if msg := validateAddressBody(b.Label, b.Lat, b.Lng, b.Note, b.Address); msg != "" {
+		problem(w, 400, "Validation failed", msg)
+		return
+	}
+	ctx := r.Context()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	defer tx.Rollback(ctx)
+	var curDefault bool
+	err = tx.QueryRow(ctx, `SELECT is_default FROM customer_addresses WHERE id=$1 AND user_id=$2`, id, c.Sub).Scan(&curDefault)
+	if err != nil {
+		problem(w, 404, "Not found", "delivery address not found")
+		return
+	}
+	wantDefault := curDefault
+	if b.IsDefault != nil {
+		wantDefault = *b.IsDefault
+	}
+	if wantDefault && !curDefault {
+		if _, err := tx.Exec(ctx, `UPDATE customer_addresses SET is_default=false, updated_at=now() WHERE user_id=$1 AND is_default`, c.Sub); err != nil {
+			problem(w, 500, "Server error", err.Error())
+			return
+		}
+	}
+	var updated time.Time
+	err = tx.QueryRow(ctx, `UPDATE customer_addresses SET label=$3, address=$4, lat=$5, lng=$6, note=$7, is_default=$8, updated_at=now() WHERE id=$1 AND user_id=$2 RETURNING updated_at`,
+		id, c.Sub, strings.TrimSpace(b.Label), strings.TrimSpace(b.Address), b.Lat, b.Lng, b.Note, wantDefault).Scan(&updated)
+	if err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"id": id, "label": strings.TrimSpace(b.Label), "address": strings.TrimSpace(b.Address), "lat": b.Lat, "lng": b.Lng, "note": b.Note, "is_default": wantDefault, "updated_at": updated.UTC().Format(time.RFC3339)})
+}
+
+func (s *Server) deleteAddress(w http.ResponseWriter, r *http.Request) {
+	c := claims(r)
+	id := r.PathValue("id")
+	ctx := r.Context()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	defer tx.Rollback(ctx)
+	var wasDefault bool
+	err = tx.QueryRow(ctx, `DELETE FROM customer_addresses WHERE id=$1 AND user_id=$2 RETURNING is_default`, id, c.Sub).Scan(&wasDefault)
+	if err != nil {
+		problem(w, 404, "Not found", "delivery address not found")
+		return
+	}
+	promoted := ""
+	if wasDefault {
+		// Keep the book usable: promote the newest remaining address.
+		_ = tx.QueryRow(ctx, `UPDATE customer_addresses SET is_default=true, updated_at=now() WHERE id=(SELECT id FROM customer_addresses WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1) RETURNING id`, c.Sub).Scan(&promoted)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"deleted": true, "promoted_default_id": promoted})
+}
+
+func (s *Server) setDefaultAddress(w http.ResponseWriter, r *http.Request) {
+	c := claims(r)
+	id := r.PathValue("id")
+	ctx := r.Context()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	defer tx.Rollback(ctx)
+	var exists bool
+	_ = s.db.QueryRow(ctx, `SELECT true FROM customer_addresses WHERE id=$1 AND user_id=$2`, id, c.Sub).Scan(&exists)
+	if !exists {
+		problem(w, 404, "Not found", "delivery address not found")
+		return
+	}
+	if _, err := tx.Exec(ctx, `UPDATE customer_addresses SET is_default=false, updated_at=now() WHERE user_id=$1 AND is_default`, c.Sub); err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	if _, err := tx.Exec(ctx, `UPDATE customer_addresses SET is_default=true, updated_at=now() WHERE id=$1 AND user_id=$2`, id, c.Sub); err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"id": id, "is_default": true})
+}
+
+// defaultAddressFor returns the user's default (else newest) dropoff for
+// orders that omit both address_id and an explicit pin.
+func (s *Server) defaultAddressFor(ctx context.Context, userID string) (lat, lng float64, note string, ok bool) {
+	err := s.db.QueryRow(ctx, `SELECT lat, lng, note FROM customer_addresses WHERE user_id=$1 ORDER BY is_default DESC, created_at DESC LIMIT 1`, userID).Scan(&lat, &lng, &note)
+	return lat, lng, note, err == nil
 }
 
 // ---------- Courier ----------

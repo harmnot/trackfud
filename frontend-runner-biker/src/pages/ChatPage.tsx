@@ -1,10 +1,12 @@
 /**
- * Courier↔customer chat, text first: quick replies (EN/ID/MS), offline
- * dictionary translation fallback, voice notes recorded on-device.
- * Server translation + moderation apply when the chat endpoint ships.
+ * Runner/biker ↔ customer chat, text first: messages load from the API
+ * (`GET /courier/deliveries/{id}/messages`) for the active delivery.
+ * Quick replies are input shortcuts only — never stored thread data.
+ * Voice notes record on-device; server translation applies per message.
  */
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router';
 import { Button, Note, Page } from '../components/ui';
 import { QUICK_REPLIES, useChat } from '../features/chat/chatStore';
 import { useDelivery } from '../features/delivery/deliveryStore';
@@ -16,6 +18,7 @@ export function ChatPage(): React.JSX.Element {
   const { t } = useTranslation();
   const messages = useChat((s) => s.messages);
   const loaded = useChat((s) => s.loaded);
+  const chatError = useChat((s) => s.error);
   const deliveryId = useDelivery((s) => s.active?.deliveryId ?? null);
   const [text, setText] = useState('');
   const [recState, setRecState] = useState<'idle' | 'rec' | 'unsupported'>('idle');
@@ -92,11 +95,33 @@ export function ChatPage(): React.JSX.Element {
     rec.current = null;
   }
 
+  if (!deliveryId) {
+    return (
+      <Page>
+        <h1 className="tb-display">{t('chat.title')}</h1>
+        <div className="tb-card mt-3">
+          <p className="font-bold">{t('chat.noDelivery')}</p>
+          <p className="tb-sub mt-1">{t('chat.noDeliveryBody')}</p>
+          <div className="mt-3 flex flex-col gap-2">
+            <Link to="/run-setup" className="tb-btn tb-btn-pine tb-btn-block">{t('account.startTracking')}</Link>
+            <Link to="/delivery" className="tb-btn tb-btn-soft tb-btn-block">{t('nav.delivery')}</Link>
+          </div>
+        </div>
+      </Page>
+    );
+  }
+
   return (
     <Page>
       <h1 className="tb-display">{t('chat.title')}</h1>
       <p className="tb-sub">{t('chat.offline')}</p>
       {!loaded && <p className="tb-sub mt-2">{t('common.loading')}</p>}
+      {loaded && chatError && (
+        <div className="mt-2 flex flex-col gap-2">
+          <Note tone="error">{t('chat.errorLoad')}</Note>
+          <Button variant="soft" block onClick={() => void useChat.getState().load({ deliveryId })}>{t('common.retry')}</Button>
+        </div>
+      )}
       <div className="tb-chat mt-3" role="log" aria-label={t('chat.title')}>
         {messages.map((m) => {
           const shown = m.translated ?? (lang === m.lang ? m.text : m.text);

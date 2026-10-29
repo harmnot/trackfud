@@ -1,16 +1,19 @@
 :80 {
 	handle /api/* {
 		uri strip_prefix /api
-		reverse_proxy tb-backend:8080
+		reverse_proxy tf-backend:8080
+	}
+	handle /back-office/* {
+		reverse_proxy tf-back-office:80
 	}
 	handle /customer/* {
-		reverse_proxy tb-customer:80
+		reverse_proxy tf-customer:80
 	}
 	handle /courier/* {
-		reverse_proxy tb-courier:80
+		reverse_proxy tf-courier:80
 	}
 	handle /merchant/* {
-		reverse_proxy tb-merchant:80
+		reverse_proxy tf-merchant:80
 	}
-	respond "Trackfud gateway: open /customer/ /courier/ /merchant/" 200
+	respond "Trackfud gateway: open /back-office/ /customer/ /courier/ /merchant/" 200
 }

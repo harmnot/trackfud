@@ -7,7 +7,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
 import { Button, Field, Note, Page } from '../components/ui';
+import { fetchApplication, isPartnerUnlocked, partnerStateOf } from '../features/profile/profileApi';
 import { toActiveDelivery, toPhase, useDelivery } from '../features/delivery/deliveryStore';
 import { confirmDropoff, confirmPickup, fetchActiveDelivery, isMissingBackend, markArrived } from '../features/delivery/courierApi';
 import { useStaff } from '../features/staff/staffStore';
@@ -32,6 +34,8 @@ export function DeliveryPage() {
   const nudged = useRef(false);
   const staffActive = useStaff((s) => s.active);
   const staffTravel = useStaff((s) => s.travel);
+  const appQ = useQuery({ queryKey: ['delivery-application'], queryFn: fetchApplication });
+  const unlocked = isPartnerUnlocked({ partner: partnerStateOf(appQ.data?.status), staffActive });
   const lang = (['en', 'id', 'ms'].includes(i18n.language) ? i18n.language : 'en') as 'en' | 'id' | 'ms';
 
   // Recover the live leg after a refresh: the server is the truth.
@@ -71,6 +75,16 @@ export function DeliveryPage() {
     return (
       <Page>
         <h1 className="tb-display">{t('delivery.none')}</h1>
+        {appQ.isSuccess && !unlocked && (
+          <div className="tb-card mt-3">
+            <p className="text-sm font-bold">{t('account.partnerTitle')}</p>
+            <p className="tb-sub mt-1">{t('account.deliveryLocked')}</p>
+            <div className="mt-3 flex flex-col gap-2">
+              <Link to="/onboarding" className="tb-btn tb-btn-pine tb-btn-block">{t('account.becomePartner')}</Link>
+              <Link to="/run-setup" className="tb-btn tb-btn-soft tb-btn-block">{t('account.startTracking')}</Link>
+            </div>
+          </div>
+        )}
         <div className="mt-4"><Link to="/run" className="tb-btn tb-btn-pine tb-btn-block">{t('delivery.back')}</Link></div>
       </Page>
     );

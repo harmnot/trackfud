@@ -312,7 +312,7 @@ func intOf(v any) int {
 // ---------- ID number crypto (demo-grade AES-GCM; KMS in production) ----------
 
 func (s *Server) idKey() [32]byte {
-	return sha256.Sum256([]byte("tb-idenc-v1:" + s.cfg.JWTSecret))
+	return sha256.Sum256([]byte("tf-idenc-v1:" + s.cfg.JWTSecret))
 }
 
 // encryptID seals an ID number with AES-GCM (base64 nonce+ciphertext).
@@ -342,7 +342,7 @@ func hashIDNumber(number string) string {
 	n := strings.ToLower(strings.TrimSpace(number))
 	n = strings.ReplaceAll(n, " ", "")
 	n = strings.ReplaceAll(n, "-", "")
-	sum := sha256.Sum256([]byte("tb-idhash-v1:" + n))
+	sum := sha256.Sum256([]byte("tf-idhash-v1:" + n))
 	return fmt.Sprintf("%x", sum)
 }
 

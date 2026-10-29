@@ -1,9 +1,11 @@
-// Package ai is the single gateway to the Meta Model API (Milestone B6).
+// Package ai is the single gateway to model serving (Milestone B6):
+// chat/text calls go to the Modal-hosted endpoint by default, with the
+// Meta Model API direct as the env-override fallback.
 //
-// All model calls run on the server; the API key never reaches the browser.
+// All model calls run on the server; keys never reach the browser.
 // Every call is reported to a CallLogger so the app layer can persist an
-// ai_calls row (feature, model, latency, tokens, cost). When no key is
-// configured (or quota/upstream fails), callers use the deterministic
+// ai_calls row (feature, model, latency, tokens, cost). When no credential
+// is configured (or quota/upstream fails), callers use the deterministic
 // fallbacks in fallback.go so the demo works offline.
 package ai
 
@@ -25,8 +27,14 @@ const (
 	ModelSAM         = "sam-3.1"
 )
 
-// DefaultBaseURL is the Meta Model API endpoint.
+// DefaultBaseURL is the Meta Model API endpoint (direct fallback).
 const DefaultBaseURL = "https://api.meta.ai/v1"
+
+// DefaultModalBaseURL is the Modal-hosted OpenAI-compatible endpoint that
+// serves chat/text calls. Modal enforces proxy auth at the edge via the
+// Modal-Key / Modal-Secret header pair, so plain Bearer auth alone gets a
+// 401 before any route runs.
+const DefaultModalBaseURL = "https://muhammad099x-work--ep-muse-spark-open-816b-a42b-server.us-west.modal.direct"
 
 // Price table: micro-USD per 1M tokens (integers only, never floats).
 // Spark: $1.25 in / $4.25 out; contributor: $0.10 / $0.20 per 1M.
@@ -35,8 +43,8 @@ var pricePerMTokens = map[string][2]int64{
 	ModelContributor: {100000, 200000},
 }
 
-// ErrNoKey means no Meta API key is configured: use a cached fallback.
-var ErrNoKey = errors.New("ai: no Meta API key configured")
+// ErrNoKey means no model credential is configured: use a cached fallback.
+var ErrNoKey = errors.New("ai: no model credential configured")
 
 // UpstreamError wraps a Meta API failure; Retryable tells the jobs worker
 // whether re-running later could succeed (5xx/429) or not (4xx/schema).
@@ -49,9 +57,14 @@ type UpstreamError struct {
 func (e *UpstreamError) Error() string { return "ai " + e.Op + ": " + e.Err.Error() }
 func (e *UpstreamError) Unwrap() error { return e.Err }
 
-// Config wires the client. Empty APIKey selects fallback-only mode.
+// Config wires the client. Empty APIKey with an empty Modal pair selects
+// fallback-only mode. The Modal proxy-token pair (Modal-Key / Modal-Secret)
+// is the credential for the Modal-hosted endpoint; APIKey stays as the
+// Meta-direct key and passes through as Bearer for inner services.
 type Config struct {
 	APIKey           string
+	ModalKey         string
+	ModalSecret      string
 	BaseURL          string
 	SparkModel       string
 	ContributorModel string
@@ -59,9 +72,20 @@ type Config struct {
 	SAMModel         string
 }
 
+// UsesModal reports whether chat/text calls route to the Modal endpoint
+// (explicit pair present). Transcription and SAM vision are NOT served by
+// that endpoint: they stay on Meta direct (APIKey) or deterministic
+// fallbacks.
+func (c Config) UsesModal() bool { return c.ModalKey != "" && c.ModalSecret != "" }
+
 func (c Config) withDefaults() Config {
 	if c.BaseURL == "" {
-		c.BaseURL = DefaultBaseURL
+		if c.UsesModal() {
+			c.BaseURL = DefaultModalBaseURL
+		}
+		if c.BaseURL == "" {
+			c.BaseURL = DefaultBaseURL
+		}
 	}
 	if c.SparkModel == "" {
 		c.SparkModel = ModelSpark
@@ -110,19 +134,31 @@ type Client struct {
 	cli openai.Client
 }
 
-// New builds a Client. With an empty key the client still builds but every
+// New builds a Client. With no credential the client still builds but every
 // live call returns ErrNoKey so workers fall back deterministically.
 func New(cfg Config) *Client {
 	cfg = cfg.withDefaults()
-	cli := openai.NewClient(
+	opts := []option.RequestOption{
 		option.WithBaseURL(cfg.BaseURL),
 		option.WithAPIKey(cfg.APIKey),
-	)
-	return &Client{cfg: cfg, cli: cli}
+	}
+	if cfg.UsesModal() {
+		// Modal proxy auth: header pair, not Bearer. Authorization is left
+		// free for the inner service behind the proxy.
+		opts = append(opts,
+			option.WithHeader("Modal-Key", cfg.ModalKey),
+			option.WithHeader("Modal-Secret", cfg.ModalSecret),
+		)
+	}
+	return &Client{cfg: cfg, cli: openai.NewClient(opts...)}
 }
 
-// HasKey reports whether live model calls are possible.
-func (c *Client) HasKey() bool { return c.cfg.APIKey != "" }
+// HasKey reports whether live model calls are possible: Meta key or the
+// full Modal proxy-token pair.
+func (c *Client) HasKey() bool { return c.cfg.APIKey != "" || c.cfg.UsesModal() }
+
+// UsesModal reports whether this client routes through the Modal endpoint.
+func (c *Client) UsesModal() bool { return c.cfg.UsesModal() }
 
 // SparkModel returns the configured Spark model ID.
 func (c *Client) SparkModel() string { return c.cfg.SparkModel }

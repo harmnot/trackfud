@@ -46,7 +46,7 @@ func (s *Server) issueTokens(w http.ResponseWriter, r *http.Request, userID, ema
 	if _, err := s.db.Exec(r.Context(), `INSERT INTO refresh_tokens(user_id,app,token_hash,expires_at) VALUES($1,$2,$3,$4)`, userID, app, authjwt.HashToken(raw), now.Add(time.Duration(s.cfg.Auth.RefreshTTLSeconds)*time.Second)); err != nil {
 		return nil, err
 	}
-	http.SetCookie(w, &http.Cookie{Name: "tb_" + app + "_refresh", Value: raw, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: s.cfg.Auth.RefreshTTLSeconds})
+	http.SetCookie(w, &http.Cookie{Name: "tf_" + app + "_refresh", Value: raw, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: s.cfg.Auth.RefreshTTLSeconds})
 	return map[string]any{"access_token": access, "token_type": "Bearer", "expires_in": s.cfg.Auth.AccessTTLSeconds, "user": map[string]any{"id": userID, "email": email, "roles": roles}}, nil
 }
 
@@ -146,10 +146,10 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 	if q := r.URL.Query().Get("app"); q != "" {
 		app = q
 	}
-	c, err := r.Cookie("tb_" + app + "_refresh")
+	c, err := r.Cookie("tf_" + app + "_refresh")
 	if err != nil || c.Value == "" {
 		// try any app cookie
-		for _, name := range []string{"tb_customer_refresh", "tb_courier_refresh", "tb_merchant_refresh"} {
+		for _, name := range []string{"tf_customer_refresh", "tf_courier_refresh", "tf_merchant_refresh"} {
 			if cc, e := r.Cookie(name); e == nil && cc.Value != "" {
 				c, err = cc, nil
 				break
@@ -177,7 +177,7 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
-	for _, name := range []string{"tb_customer_refresh", "tb_courier_refresh", "tb_merchant_refresh"} {
+	for _, name := range []string{"tf_customer_refresh", "tf_courier_refresh", "tf_merchant_refresh"} {
 		if c, err := r.Cookie(name); err == nil {
 			_, _ = s.db.Exec(r.Context(), `UPDATE refresh_tokens SET revoked_at=now() WHERE token_hash=$1`, authjwt.HashToken(c.Value))
 			http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})

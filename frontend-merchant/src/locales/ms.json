@@ -55,7 +55,9 @@
     "canDeliver": "Boleh menghantar",
     "onShift": "Dalam syif",
     "send": "Hantar jemputan",
-    "sent": "Dihantar ✓"
+    "sent": "Dihantar ✓",
+    "howJoin": "Cara rakan menyertai",
+    "howJoinBody": "Mereka daftar dalam aplikasi Stride & Earn dengan emel yang sama yang anda jemput, buka mod Staff, pilih kedai ini, dan mula syif. Jemputan melalui emel — tiada kod."
   },
   "status": {
     "title": "Status kedai",
@@ -176,9 +178,9 @@
     "ready": "Tandai siap",
     "readyBadge": "SEDIA",
     "pickupCode": "Kod ambil",
-    "showCode": "Tunjuk kod ini kepada kurier",
+    "showCode": "Tunjuk kod ini kepada pelari atau penunggang",
     "courierSearching": "Mencari pelari atau penunggang…",
-    "courierNotified": "Kurier dimaklum — dalam perjalanan",
+    "courierNotified": "Pelari/penunggang dimaklum — dalam perjalanan",
     "courierHanded": "Diserahkan",
     "courierEta": "· {min} min lagi",
     "courierStaff": "Fallback kakitangan berjalan — rakan sepasukan masih boleh terima",

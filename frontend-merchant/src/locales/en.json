@@ -55,7 +55,9 @@
     "canDeliver": "Can deliver (staff fallback)",
     "onShift": "On shift",
     "send": "Send invite",
-    "sent": "Invite sent (see demo email outbox) ✓"
+    "sent": "Invite sent (see demo email outbox) ✓",
+    "howJoin": "How teammates join",
+    "howJoinBody": "They sign up in the Stride & Earn app with the same email you invited, open Staff mode, pick this store, and clock on shift. Invites are by email — there is no code."
   },
   "status": {
     "title": "Store status",
@@ -176,9 +178,9 @@
     "ready": "Mark ready",
     "readyBadge": "READY",
     "pickupCode": "Pickup code",
-    "showCode": "Show this code to the courier",
+    "showCode": "Show this code to the runner or biker",
     "courierSearching": "Finding a runner or biker…",
-    "courierNotified": "Courier notified — on the way",
+    "courierNotified": "Runner/biker notified — on the way",
     "courierHanded": "Handed over",
     "courierEta": "· {min} min away",
     "courierStaff": "Staff fallback running — a teammate may still accept",

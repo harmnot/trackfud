@@ -28,6 +28,7 @@ import {
     img,
     ratingFor,
 } from "./components/ui";
+import { AddressesPage } from "./features/addresses/AddressesPage";
 import { CheckoutPage } from "./features/orders/CheckoutPage";
 import { getWallet } from "./features/orders/api";
 import { PayError, topUpWithPaddle } from "./features/orders/pay";
@@ -44,6 +45,18 @@ type Restaurant = {
     distance_m: number;
     availability: string;
     prep_minutes: number;
+};
+type RestaurantDetail = {
+    id: string;
+    name: string;
+    currency: string;
+    address: string;
+    pickup_note: string;
+    prep_minutes: number;
+    lat: number;
+    lng: number;
+    availability: string;
+    distance_m?: number;
 };
 type MenuItem = {
     id: string;
@@ -356,19 +369,22 @@ function AuthPage({ mode }: { mode: "login" | "signup" }) {
 
 const CATS = ["All", "Rice", "Wraps", "Drinks", "Fresh"];
 
+function customerLoc(): { lat: number; lng: number } {
+    try {
+        const saved = JSON.parse(
+            localStorage.getItem("tb:customer:loc") ?? "null",
+        ) as { lat: number; lng: number } | null;
+        if (typeof saved?.lat === "number" && typeof saved?.lng === "number")
+            return saved;
+    } catch {
+        /* fall through to default */
+    }
+    return { lat: -6.2088, lng: 106.8456 };
+}
+
 function Home() {
     const { t } = useTranslation();
-    const saved = (() => {
-        try {
-            return JSON.parse(
-                localStorage.getItem("tb:customer:loc") ?? "null",
-            ) as { lat: number; lng: number } | null;
-        } catch {
-            return null;
-        }
-    })();
-    const lat = saved?.lat ?? -6.2088;
-    const lng = saved?.lng ?? 106.8456;
+    const { lat, lng } = customerLoc();
     const [search, setSearch] = useState("");
     const [cat, setCat] = useState("All");
     const q = useQuery({
@@ -484,7 +500,7 @@ function Home() {
                         </Button>
                     </div>
                 )}
-                <List className="flex flex-col gap-3 mt-3">
+                <List className="tb-grid-shops mt-3">
                     {shops.map((r, i) => (
                         <Item key={r.id} index={i}>
                             <Link
@@ -571,9 +587,13 @@ function RestaurantPage() {
     const setQty = useCart((s) => s.setQty);
     const cart = useCart((s) => s.items);
     const [added, setAdded] = useState<string | null>(null);
+    const { lat, lng } = customerLoc();
     const info = useQuery({
-        queryKey: ["restaurant", id],
-        queryFn: () => api<Restaurant>(`/customer/restaurants/${id}`),
+        queryKey: ["restaurant", id, lat, lng],
+        queryFn: () =>
+            api<RestaurantDetail>(
+                `/customer/restaurants/${id}?lat=${lat}&lng=${lng}`,
+            ),
     });
     const q = useQuery({
         queryKey: ["menu", id],
@@ -624,6 +644,31 @@ function RestaurantPage() {
                         <p className="tb-promo-sub">
                             {info.data?.address ?? ""}
                         </p>
+                        {info.data && (
+                            <p className="tb-dish-tags">
+                                <Tag>★ {ratingFor(info.data.id)}</Tag>
+                                {typeof info.data.distance_m ===
+                                    "number" && (
+                                    <Tag tone="dim">
+                                        {formatDistance(
+                                            info.data.distance_m,
+                                            i18n.language,
+                                        )}
+                                    </Tag>
+                                )}
+                                {info.data.availability ===
+                                "runners_nearby" ? (
+                                    <Tag>{t("home.runnersNearby")}</Tag>
+                                ) : (
+                                    <Tag tone="dim">
+                                        {t("home.staffOnly")}
+                                    </Tag>
+                                )}
+                                <Tag tone="dim">
+                                    ~{info.data.prep_minutes} min prep
+                                </Tag>
+                            </p>
+                        )}
                     </div>
                 </div>
                 <label className="text-sm flex gap-2 items-center font-semibold mt-3">
@@ -658,7 +703,7 @@ function RestaurantPage() {
                 {q.data && q.data.items.length === 0 && (
                     <p className="tb-sub mt-3">{t("menu.empty")}</p>
                 )}
-                <List className="flex flex-col gap-2 mt-3">
+                <List className="tb-dish-wrap flex flex-col gap-2 mt-3">
                     {(q.data?.items ?? []).map((item, i) => (
                         <Item key={item.id} index={i}>
                             <article className="tb-dish">
@@ -742,88 +787,9 @@ function RestaurantPage() {
 }
 
 function LocationPage() {
-    const { t } = useTranslation();
-    const [lat, setLat] = useState("-6.2088");
-    const [lng, setLng] = useState("106.8456");
-    const [note, setNote] = useState("");
-    const [msg, setMsg] = useState("");
-    function useGps() {
-        navigator.geolocation.getCurrentPosition(
-            (p) => {
-                setLat(String(p.coords.latitude));
-                setLng(String(p.coords.longitude));
-            },
-            () => setMsg(t("common.error")),
-        );
-    }
-    async function save() {
-        const loc = { lat: parseFloat(lat), lng: parseFloat(lng), note };
-        localStorage.setItem("tb:customer:loc", JSON.stringify(loc));
-        try {
-            await api("/customer/addresses", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Idempotency-Key": crypto.randomUUID(),
-                },
-                body: JSON.stringify({ label: "Delivery", ...loc }),
-            });
-            setMsg(t("location.saved"));
-        } catch {
-            setMsg("Saved on this device (log in to sync to server).");
-        }
-    }
     return (
         <Shell>
-            <Page>
-                <h1 className="tb-display">{t("location.title")}</h1>
-                <p className="tb-sub">Pin where the runner meets you.</p>
-                <div className="tb-promo mt-3" style={{ minHeight: 120 }}>
-                    <img src={img("banner-london.jpg")} alt="" />
-                    <div className="tb-promo-body">
-                        <p
-                            className="tb-promo-title font-mono"
-                            style={{ fontSize: "1rem" }}
-                        >
-                            {lat}, {lng}
-                        </p>
-                    </div>
-                </div>
-                <div className="flex flex-col gap-3 mt-3">
-                    <Button variant="soft" block onClick={useGps}>
-                        ◎ {t("location.useGps")}
-                    </Button>
-                    <div className="grid grid-cols-2 gap-3">
-                        <Field label={t("location.lat")}>
-                            <input
-                                className="tb-input"
-                                inputMode="decimal"
-                                value={lat}
-                                onChange={(e) => setLat(e.target.value)}
-                            />
-                        </Field>
-                        <Field label={t("location.lng")}>
-                            <input
-                                className="tb-input"
-                                inputMode="decimal"
-                                value={lng}
-                                onChange={(e) => setLng(e.target.value)}
-                            />
-                        </Field>
-                    </div>
-                    <Field label={t("location.note")}>
-                        <input
-                            className="tb-input"
-                            value={note}
-                            onChange={(e) => setNote(e.target.value)}
-                        />
-                    </Field>
-                    <Button variant="ember" block onClick={() => void save()}>
-                        {t("location.save")}
-                    </Button>
-                    {msg && <Note tone="info">{msg}</Note>}
-                </div>
-            </Page>
+            <AddressesPage />
         </Shell>
     );
 }

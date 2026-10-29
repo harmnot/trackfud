@@ -17,7 +17,7 @@ export default defineConfig({
                 id: "/courier/",
                 name: "Trackfud",
                 short_name: "Trackfud",
-                description: "Health-first food delivery — Courier",
+                description: "Stride & Earn — run or ride, earn while you move",
                 display: "standalone",
                 start_url: "/courier/",
                 scope: "/courier/",

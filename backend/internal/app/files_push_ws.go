@@ -18,8 +18,7 @@ import (
 	"time"
 
 	"Trackfud/internal/authjwt"
-	"Trackfud/internal/authjwt"
-usulockHolmes/webpush-go"
+	"github.com/SherClockHolmes/webpush-go"
 	"github.com/gorilla/websocket"
 )
 

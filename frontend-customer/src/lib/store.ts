@@ -41,7 +41,9 @@ export const useCart = create<CartState>((set, get) => ({
       .items.map((i) => (i.id === id ? { ...i, qty } : i))
       .filter((i) => i.qty > 0);
     save(next);
-    set({ items: next });
+    // Keep the single-restaurant invariant: an emptied cart forgets its shop.
+    if (next.length === 0) saveMerchant(null);
+    set({ items: next, merchantId: next.length === 0 ? null : get().merchantId });
   },
   clear: () => {
     save([]);

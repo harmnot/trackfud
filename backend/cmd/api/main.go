@@ -8,9 +8,9 @@ import (
 	"os"
 	"time"
 
+	"Trackfud/internal/app"
 	"Trackfud/internal/config"
-ig"
-	"gthub.com/jackc/pgx/v5/pxpool
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -39,7 +39,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
-	migDir := os.Getenv("TB_MIGRATIONS_DIR")
+	migDir := os.Getenv("TF_MIGRATIONS_DIR")
 	if migDir == "" {
 		migDir = "db/migrations"
 	}
@@ -50,12 +50,16 @@ func main() {
 	srv := app.New(cfg, pool, log)
 	if cfg.Server.DemoMode {
 		if err := srv.SeedDemo(ctx); err != nil {
-			log.Warn("seed", "err", err)
+			log.Warn("seed demo", "err", err)
+		}
+	} else {
+		if err := srv.SeedTestAccounts(ctx); err != nil {
+			log.Warn("seed test accounts", "err", err)
 		}
 	}
 	srv.StartWorker()
 	if err := os.MkdirAll(cfg.UploadDir, 0o755); err != nil {
-		log.Error("upload dir", "err", err)
+		log.Error("upload dir", "upload_dir", cfg.UploadDir, "err", err)
 		os.Exit(1)
 	}
 	log.Info("Trackfud api listening", "addr", cfg.Server.Addr, "demo_mode", cfg.Server.DemoMode)

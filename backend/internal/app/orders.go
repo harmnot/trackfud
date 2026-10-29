@@ -242,9 +242,14 @@ func iso(t *time.Time) any {
 
 // orderView shapes one order for a role: customers see their delivery PIN,
 // merchants see the pickup code; neither sees the other's secret.
+// Both roles see the restaurant name so checkout and receipts can show it
+// without a second fetch.
 func (s *Server) orderView(ctx context.Context, o orderRow, role string) map[string]any {
+	var merchantName string
+	_ = s.db.QueryRow(ctx, `SELECT name FROM merchants WHERE id=$1`, o.MerchantID).Scan(&merchantName)
 	v := map[string]any{
 		"id": o.ID, "code": o.Code, "status": o.Status, "merchant_id": o.MerchantID,
+		"merchant_name": merchantName,
 		"currency": o.Currency,
 		"subtotal": money(o.Subtotal, o.Currency), "delivery_fee": money(o.Delivery, o.Currency),
 		"service_fee": money(o.Service, o.Currency), "tip": money(o.Tip, o.Currency),
@@ -372,8 +377,13 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if b.Lat != nil && b.Lng != nil {
 		lat, lng = *b.Lat, *b.Lng
+	} else if dlat, dlng, dnote, ok := s.defaultAddressFor(r.Context(), c.Sub); ok {
+		lat, lng, note = dlat, dlng, dnote
+		if b.Note != "" {
+			note = b.Note
+		}
 	} else {
-		problem(w, 400, "Validation failed", "address_id or lat/lng required")
+		problem(w, 400, "Validation failed", "address_id or lat/lng required (save a default address first)")
 		return
 	}
 	if lat < -90 || lat > 90 || lng < -180 || lng > 180 {
@@ -945,7 +955,7 @@ func newOrderSecrets() (code, pin string, err error) {
 		}
 		b[i] = alphabet[n.Int64()]
 	}
-	return "TB-" + string(b), randomDigits(4), nil
+	return "TF-" + string(b), randomDigits(4), nil
 }
 
 func randomDigits(n int) string {

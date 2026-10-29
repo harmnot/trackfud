@@ -46,7 +46,7 @@
 ## Security and logging
 
 - Same-origin, no CORS. Short JWT in memory; per-app httpOnly refresh cookies
-  (`X-TB-App`). RBAC on every route. Rate-limit auth/AI/presign.
+  (`X-TF-App`). RBAC on every route. Rate-limit auth/AI/presign.
 - Secrets from env only, never committed. PII encrypted (AES-GCM); KYC views audited.
 - Structured `log/slog` with request/job IDs. No `fmt.Println` debugging leftovers.
   No passwords, tokens, or ID numbers in logs.

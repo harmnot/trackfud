@@ -19,7 +19,7 @@ sandbox webhooks, Meta Model API, Google Routes API.
   admin-lite, webhooks; §15.5 WS ticket flow). Generate server interfaces.
 - Skeleton: `config/` (koanf + `config.yaml` defaults per §15.2), `slog`,
   `/healthz`, goose migrations baseline, auth (JWT 15 min + per-app refresh
-  cookies via `X-TB-App`, RBAC), `httpapi` router + middleware.
+  cookies via `X-TF-App`, RBAC), `httpapi` router + middleware.
 - `db/migrations`, `db/queries` (sqlc + pgx), `db/seed` stubs; `Containerfile`.
 - Done when: `go build ./... && go vet ./...` pass; health endpoint answers;
   generated TS client is consumable by frontends.
@@ -90,14 +90,16 @@ sandbox webhooks, Meta Model API, Google Routes API.
   versioned prompts, JSON schemas, tool calling; jobs `ai_menu_import`,
   `ai_translate`, `ai_trust_brief`, `ai_proof_check`, `ai_feedback_labels`;
   every call → `ai_calls` row; cached fallbacks for demo inputs.
-- Provider plan (2026-10-28): chat/text/tool-calling features route to the
-  Modal-hosted endpoint via `TB_META_BASE_URL` (+ proxy token in
-  `TB_META_API_KEY`, `TB_META_SPARK_MODEL` = the Modal-served model id).
-  Realtime PCM transcription and SAM vision are NOT served by that endpoint:
-  they stay on the Meta Model API direct or on the `fallback.go` fallbacks
-  until Modal-hosted equivalents exist. If transcribe/SAM must run while the
-  global base points at Modal, add a per-feature base-URL override (the
-  current `TB_META_BASE_URL` is global). Keys never leave the server.
+- Provider (2026-10-28, implemented): chat/text/tool-calling features route
+  to the Modal-hosted endpoint. Auth is the Modal proxy-token PAIR
+  (`TF_MODAL_KEY`/`TF_MODAL_SECRET` → `Modal-Key`/`Modal-Secret` headers,
+  not Bearer); `ai.Config.UsesModal()` gates it, `config.yaml ai:` block
+  sets base + `spark_model` (env `TF_META_BASE_URL`/`TF_META_SPARK_MODEL`
+  win). Realtime PCM transcription and SAM vision are NOT served by that
+  endpoint: with no Meta-direct `TF_META_API_KEY`, voice falls back to the
+  typed transcript and SAM stays a stub (humans decide). Keys never leave
+  the server. Unconfirmed: exact served model id (default `muse-spark-open`;
+  verify via `GET /v1/models` with the pair).
 - Voice relay (PCM → Transcribe → Spark tools → TTS) with server-checked
   confirmations; SAM 3.1 crops (menu/ID/proof); translated chat + moderation;
   AI Coach report input data.

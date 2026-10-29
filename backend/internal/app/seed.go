@@ -48,6 +48,9 @@ func (s *Server) SeedDemo(ctx context.Context) error {
 		_, _ = s.db.Exec(ctx, `INSERT INTO ledger_accounts(owner_type,owner_id,kind,currency,balance_minor)
 			VALUES('customer',$1,'customer_wallet','IDR',500000) ON CONFLICT (owner_type,owner_id,kind,currency) DO NOTHING`, judge)
 	}
+	if err := s.SeedTestAccounts(ctx); err != nil {
+		return err
+	}
 	type seedM struct {
 		name, addr, cur, tz string
 		lat, lng            float64
@@ -90,6 +93,64 @@ func (s *Server) SeedDemo(ctx context.Context) error {
 		for _, it := range items {
 			name := `{"en":"` + it.en + `","id":"` + it.idn + `","ms":"` + it.ms + `"}`
 			_, _ = s.db.Exec(ctx, `INSERT INTO menu_items(merchant_id,name,description,price_minor,size_class,spill_risk,travels_well) VALUES($1,$2,'{}',$3,$4,$5,$6)`, mid, name, it.price, it.size, it.spill, it.tw)
+		}
+	}
+	return nil
+}
+
+// Canonical local-test accounts. Every manual test and every seed run uses
+// these emails with password "trackfud123" (see .agents/skills/seed-test-data).
+// Idempotent: re-running resets the password and repairs the role, courier,
+// merchant, menu, and wallet rows, so a reseed also fixes a broken account.
+func (s *Server) SeedTestAccounts(ctx context.Context) error {
+	hash, _ := bcrypt.GenerateFromPassword([]byte("trackfud123"), 10)
+	seedUser := func(email, name, role string) string {
+		var id string
+		err := s.db.QueryRow(ctx, `INSERT INTO users(email,password_hash,name,email_verified) VALUES($1,$2,$3,true) ON CONFLICT (email) DO UPDATE SET name=EXCLUDED.name, password_hash=EXCLUDED.password_hash, email_verified=true RETURNING id`, email, string(hash), name).Scan(&id)
+		if err != nil {
+			return ""
+		}
+		_, _ = s.db.Exec(ctx, `INSERT INTO user_roles(user_id,role) VALUES($1,$2) ON CONFLICT DO NOTHING`, id, role)
+		return id
+	}
+	cust := seedUser("customer@example.com", "Test Customer", "customer")
+	courier := seedUser("runnerbiker@example.com", "Test Runner", "courier")
+	merch := seedUser("merchant@example.com", "Test Merchant", "merchant")
+	// Courier must be approved to go online and receive dispatch offers.
+	if courier != "" {
+		_, _ = s.db.Exec(ctx, `INSERT INTO couriers(user_id,mode,status,legal_name,approved_at,approved_by)
+			VALUES($1,'runner','approved','Test Runner',now(),'seed')
+			ON CONFLICT (user_id) DO UPDATE SET mode='runner', status='approved', legal_name='Test Runner', approved_at=now()`, courier)
+	}
+	// Customer wallet is funded so wallet checkout works out of the box.
+	if cust != "" {
+		_, _ = s.db.Exec(ctx, `INSERT INTO ledger_accounts(owner_type,owner_id,kind,currency,balance_minor)
+			VALUES('customer',$1,'customer_wallet','IDR',200000) ON CONFLICT (owner_type,owner_id,kind,currency) DO NOTHING`, cust)
+	}
+	// Merchant owns an approved store with orderable items.
+	if merch != "" {
+		var mid string
+		_ = s.db.QueryRow(ctx, `SELECT id FROM merchants WHERE owner_id=$1 AND name='Warung Test Rasa' LIMIT 1`, merch).Scan(&mid)
+		if mid == "" {
+			_ = s.db.QueryRow(ctx, `INSERT INTO merchants(owner_id,name,currency,timezone,address,location,prep_minutes,status,phone,country) VALUES($1,'Warung Test Rasa','IDR','Asia/Jakarta','Jl. Sudirman Kav. 21, Jakarta',ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,12,'approved','+62210000000','ID') RETURNING id`, merch, 106.8456, -6.2088).Scan(&mid)
+		}
+		if mid != "" {
+			var n int
+			_ = s.db.QueryRow(ctx, `SELECT count(*) FROM menu_items WHERE merchant_id=$1`, mid).Scan(&n)
+			if n == 0 {
+				for _, it := range []struct {
+					en, idn, ms, size, spill string
+					price                    int64
+					tw                       bool
+				}{
+					{"Grilled Chicken Rice Box", "Nasi Ayam Panggang", "Nasi Ayam Bakar", "M", "low", 35000, true},
+					{"Tofu Veggie Wrap", "Wrap Tahu Sayur", "Balut Tauhu Sayur", "S", "low", 28000, true},
+					{"Fruit Salad Cup", "Salad Buah", "Salad Buah", "S", "medium", 22000, true},
+				} {
+					name := `{"en":"` + it.en + `","id":"` + it.idn + `","ms":"` + it.ms + `"}`
+					_, _ = s.db.Exec(ctx, `INSERT INTO menu_items(merchant_id,name,description,price_minor,size_class,spill_risk,travels_well) VALUES($1,$2,'{}',$3,$4,$5,$6)`, mid, name, it.price, it.size, it.spill, it.tw)
+				}
+			}
 		}
 	}
 	return nil
