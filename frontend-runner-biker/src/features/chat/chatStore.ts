@@ -9,6 +9,7 @@
 import { create } from 'zustand';
 import { db } from '../../lib/db';
 import { logger } from '../../lib/logger';
+import { socket } from '../../lib/ws';
 import { fetchMessages, sendChat, translateMessage, type ServerMessage } from '../delivery/courierApi';
 
 /** One chat line. `mine` = courier wrote it. Names are never stored. */
@@ -58,7 +59,10 @@ function fromServer(m: ServerMessage): ChatMsg {
     text: m.body,
     lang: m.lang || 'en',
     translated: m.translated_body || null,
-    translatedLive: m.translated_body !== '',
+    // Live only when the server says Muse Spark produced it. A missing body
+    // means "not translated yet" — treating it as live used to make the
+    // Translate button a silent no-op.
+    translatedLive: Boolean(m.translated_body) && m.translated_live !== false,
     synced: true,
   };
 }
@@ -71,8 +75,11 @@ type ChatState = {
   deliveryId: string | null;
   load: (args: { deliveryId: string | null }) => Promise<void>;
   send: (args: { deliveryId: string | null; text: string; lang: string }) => Promise<void>;
-  receive: (args: { text: string; lang: string }) => Promise<void>;
+  /** `id` = the server message id from the realtime frame (needed to translate it). */
+  receive: (args: { id?: string; text: string; lang: string }) => Promise<void>;
   translate: (args: { deliveryId: string | null; messageId: string; to: string }) => Promise<void>;
+  /** A `chat.translated` frame: the server stored this message's translation. */
+  applyTranslation: (args: { messageId: string; translated: string; live: boolean }) => Promise<void>;
 };
 
 export const useChat = create<ChatState>((set, get) => ({
@@ -151,9 +158,10 @@ export const useChat = create<ChatState>((set, get) => ({
       }
     }
   },
-  receive: async ({ text, lang }) => {
+  receive: async ({ id, text, lang }) => {
+    if (id && get().messages.some((m) => m.id === id)) return;
     const msg: ChatMsg = {
-      id: crypto.randomUUID(),
+      id: id ?? crypto.randomUUID(),
       ts: Date.now(),
       mine: false,
       text: text.slice(0, 280),
@@ -169,6 +177,18 @@ export const useChat = create<ChatState>((set, get) => ({
       return;
     }
     set({ messages: [...get().messages, msg] });
+  },
+  applyTranslation: async ({ messageId, translated, live }) => {
+    const clean = translated.trim();
+    if (!clean || !get().messages.some((m) => m.id === messageId)) return;
+    set({
+      messages: get().messages.map((m) => (m.id === messageId ? { ...m, translated: clean, translatedLive: live } : m)),
+    });
+    try {
+      await db.chat.update(messageId, { translated: clean, translatedLive: live });
+    } catch (err) {
+      logger.warn('chat cache update failed', err);
+    }
   },
   translate: async ({ deliveryId, messageId, to }) => {
     const cur = get().messages.find((m) => m.id === messageId);
@@ -203,3 +223,24 @@ export const useChat = create<ChatState>((set, get) => ({
     }
   },
 }));
+
+let framesBound = false;
+
+/**
+ * Route chat frames into the store once for the whole app (idempotent), so
+ * an open thread gets new lines and their translations as they land — Run
+ * Mode, which used to be the only listener, is not mounted on the chat screen.
+ * Lines carry the server id, so a Translate tap can find them server-side.
+ */
+export function bindChatFrames(): void {
+  if (framesBound) return;
+  framesBound = true;
+  socket.onMessage((msg) => {
+    if (msg.type === 'chat.message') {
+      const line = (msg.text ?? msg.body ?? '').trim();
+      if (line) void useChat.getState().receive({ id: msg.message_id, text: line, lang: msg.lang ?? 'en' });
+    } else if (msg.type === 'chat.translated') {
+      void useChat.getState().applyTranslation({ messageId: msg.message_id, translated: msg.translated_body, live: msg.live });
+    }
+  });
+}

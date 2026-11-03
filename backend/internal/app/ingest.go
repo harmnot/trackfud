@@ -130,6 +130,32 @@ func AccumulateStats(prevLat, prevLng float64, prevTs time.Time, hasPrev bool, p
 	return d
 }
 
+// PositionWrite is the last-known-position update one ingest batch makes.
+// Nil fields bind SQL NULL, which the session UPDATE's COALESCE turns into
+// "keep the stored value".
+type PositionWrite struct {
+	Lng, Lat        *float64
+	SeenAt, PointTs *time.Time
+}
+
+// Moved reports whether the batch moves the session's position.
+func (p PositionWrite) Moved() bool { return p.Lng != nil && p.Lat != nil }
+
+// BatchPosition derives the position write for one filtered batch. Only
+// accepted fixes move last_pos/last_point_ts/last_seen_at: when FilterBatch
+// kept nothing (every fix too inaccurate, or a stale redelivery) the write
+// is empty, so a brand-new session stays unpositioned instead of landing on
+// (0,0) with a 0001-01-01 point time, and a positioned session keeps its
+// last trusted fix and liveness clock (the courier PWA heartbeat re-sends
+// that fix to stay visible).
+func BatchPosition(accepted int, d StatsDelta, now time.Time) PositionWrite {
+	if accepted == 0 || !d.HasLast {
+		return PositionWrite{}
+	}
+	lng, lat, seen, pt := d.LastLng, d.LastLat, now, d.LastTs
+	return PositionWrite{Lng: &lng, Lat: &lat, SeenAt: &seen, PointTs: &pt}
+}
+
 // BearingDeg returns the initial bearing in degrees between two WGS84 points.
 func BearingDeg(lat1, lng1, lat2, lng2 float64) float64 {
 	dLng := (lng2 - lng1) * math.Pi / 180

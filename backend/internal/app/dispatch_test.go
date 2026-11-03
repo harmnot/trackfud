@@ -212,6 +212,34 @@ func TestComputeCarried(t *testing.T) {
 	}
 }
 
+// The food-ready wave may only restart a search nobody has claimed: an
+// assigned (or later) delivery stays with its one courier until delivered.
+func TestCanRestartCourierSearch(t *testing.T) {
+	restartable := []string{DeliverySearching, DeliveryOffered, DeliveryStaffSearch, DeliveryNoCourier}
+	for _, st := range restartable {
+		if !canRestartCourierSearch(st, false) {
+			t.Fatalf("status %q without a courier must restart", st)
+		}
+		if canRestartCourierSearch(st, true) {
+			t.Fatalf("status %q with a courier must never restart", st)
+		}
+	}
+	locked := []string{DeliveryAssigned, DeliveryAtPickup, DeliveryPickedUp,
+		DeliveryAtDropoff, DeliveryDelivered, DeliveryCancelled, DeliveryCustomerPick}
+	for _, st := range locked {
+		if canRestartCourierSearch(st, false) {
+			t.Fatalf("status %q must never restart the courier search", st)
+		}
+	}
+	// The restart guard SQL must keep the one-courier promise: only an
+	// unclaimed row inside the restartable status set can flip.
+	for _, want := range []string{"courier_id IS NULL", "status = ANY", "search_started_at=now()"} {
+		if !strings.Contains(restartCourierSearchSQL, want) {
+			t.Fatalf("restart SQL must contain %q", want)
+		}
+	}
+}
+
 // Regression guard: the candidate query must keep its spec predicates.
 func TestDispatchCandidatesSQL(t *testing.T) {
 	for _, want := range []string{
@@ -219,7 +247,7 @@ func TestDispatchCandidatesSQL(t *testing.T) {
 		"deliveries d WHERE d.courier_id", // anti-double-assign
 		"ST_DWithin(s.last_pos",           // to-pickup + trip range
 		"ST_DWithin(s.planned_track",      // corridor
-		"string_to_array",                 // size/spill filters
+		"string_to_array",                 // size filter (spill retired)
 		"goal_left_m",                     // workout fit
 		"60 seconds",                      // fresh GPS only
 		"c.status = 'approved'",           // approved couriers only

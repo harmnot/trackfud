@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// Modal proxy auth is a header pair (Modal-Key / Modal-Secret), not Bearer.
-// A half pair must NOT enable live calls.
+// Modal proxy auth is one Bearer token, "<token-id>.<token-secret>" (Modal
+// endpoints guide), not a header pair. A half pair must NOT enable live calls.
 func TestHasKeyModalPair(t *testing.T) {
 	if New(Config{}).HasKey() {
 		t.Fatal("empty config must report no key")
@@ -42,14 +42,56 @@ func TestModalBaseURLDefault(t *testing.T) {
 	}
 }
 
-// The client must send the Modal proxy-token pair on chat calls (httptest,
-// no network). Unknown Modal model ids cost 0 instead of failing the log.
+// The base must always carry /v1: the SDK appends /chat/completions, and the
+// Modal curl hits .../v1/chat/completions. A bare root (env set either way)
+// is normalized; an explicit /v1 base is left alone.
+func TestModalBaseURLNormalization(t *testing.T) {
+	root := "https://muhammad099x-work--ep-muse-spark-open-816b-a42b-server.us-west.modal.direct"
+	for _, base := range []string{root, root + "/", root + "/v1", root + "/v1/"} {
+		got := Config{ModalKey: "wk-x", ModalSecret: "ws-y", BaseURL: base}.withDefaults()
+		if got.BaseURL != root+"/v1" {
+			t.Fatalf("base %q normalized to %q, want %q/v1", base, got.BaseURL, root)
+		}
+	}
+	meta := Config{APIKey: "meta-key"}.withDefaults()
+	if meta.BaseURL != DefaultBaseURL {
+		t.Fatalf("Meta direct base must keep /v1, got %q", meta.BaseURL)
+	}
+}
+
+// The Modal endpoint serves exactly one model id: legacy Spark ids must map
+// to it, both in config defaults and per-call, or every call 404s.
+func TestModalModelMapping(t *testing.T) {
+	for _, legacy := range []string{"", ModelSpark, "muse-spark-open"} {
+		got := Config{ModalKey: "wk-x", ModalSecret: "ws-y", SparkModel: legacy}.withDefaults()
+		if got.SparkModel != ModelModal {
+			t.Fatalf("legacy spark %q must map to %q, got %q", legacy, ModelModal, got.SparkModel)
+		}
+	}
+	served := Config{ModalKey: "wk-x", ModalSecret: "ws-y", SparkModel: ModelModal}.withDefaults()
+	if served.SparkModel != ModelModal {
+		t.Fatalf("served model id must pass through, got %q", served.SparkModel)
+	}
+	meta := Config{APIKey: "meta-key"}.withDefaults()
+	if meta.SparkModel != ModelSpark {
+		t.Fatalf("Meta direct must keep the Spark default, got %q", meta.SparkModel)
+	}
+	if got := New(Config{ModalKey: "wk-x", ModalSecret: "ws-y"}).resolveModel(ModelSpark); got != ModelModal {
+		t.Fatalf("per-call legacy model must map via Modal, got %q", got)
+	}
+}
+
+// The client must send the Modal proxy token as one Bearer token
+// "<token-id>.<token-secret>" on chat calls (httptest, no network), with no
+// custom header pair. Unknown Modal model ids cost 0 instead of failing the log.
 func TestModalHeadersSent(t *testing.T) {
 	var sawKey, sawSecret, sawAuth string
+	var sawPath string
 	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sawKey = r.Header.Get("Modal-Key")
 		sawSecret = r.Header.Get("Modal-Secret")
 		sawAuth = r.Header.Get("Authorization")
+		sawPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"chatcmpl-test","created":1,"model":"muse-spark-open",` +
 			`"object":"chat.completion","choices":[{"finish_reason":"stop","index":0,` +
@@ -69,13 +111,16 @@ func TestModalHeadersSent(t *testing.T) {
 	if out != `{"summary":"ok"}` {
 		t.Fatalf("unexpected content: %q", out)
 	}
-	if sawKey != "wk-test" || sawSecret != "ws-test" {
-		t.Fatalf("Modal proxy pair missing: key=%q secret=%q", sawKey, sawSecret)
+	if sawAuth != "Bearer wk-test.ws-test" {
+		t.Fatalf("Modal proxy auth must be one Bearer token, got Authorization=%q", sawAuth)
 	}
-	if sawAuth != "" {
-		t.Fatalf("empty APIKey must not send Authorization, got %q", sawAuth)
+	if sawKey != "" || sawSecret != "" {
+		t.Fatalf("no custom Modal header pair: key=%q secret=%q", sawKey, sawSecret)
 	}
-	if rec.Model != "muse-spark-open" || rec.ErrText != "" {
+	if sawPath != "/v1/chat/completions" {
+		t.Fatalf("SDK path must include /v1, got %q", sawPath)
+	}
+	if rec.Model != ModelModal || rec.ErrText != "" {
 		t.Fatalf("call mis-logged: %+v", rec)
 	}
 	if rec.InputTokens != 10 || rec.OutputTokens != 5 {

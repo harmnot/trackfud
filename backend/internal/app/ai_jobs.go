@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
+	"time"
 
 	"Trackfud/internal/ai"
 	"Trackfud/internal/config"
@@ -13,8 +13,8 @@ import (
 
 // ---------- B6 AI services + background jobs ----------
 //
-// One args struct per job kind (payload keys below), one worker each,
-// registered in workOnce. Workers claim an ai_jobs row first, so a
+// One args struct per job kind (payload keys below), one River worker each
+// (registered in river.go). Workers claim an ai_jobs row first, so a
 // double-delivered job runs its side effects once; every domain write is
 // additionally idempotent (upserts / guarded updates).
 
@@ -26,6 +26,10 @@ const (
 	AIJobProofCheck     = "ai_proof_check"     // {"delivery_id","file_id"}
 	AIJobFeedbackLabels = "ai_feedback_labels" // {"order_id"}
 )
+
+// aiLogTimeout bounds the ai_calls insert (detached from the caller's
+// context, which may already have expired).
+const aiLogTimeout = 5 * time.Second
 
 // AIService bundles the Meta client with the voice and crop helpers.
 type AIService struct {
@@ -43,6 +47,14 @@ func newAIService(cfg ai.Config) *AIService {
 	return &AIService{cli: c, transcriber: tr, cropper: ai.NewMetaCropper(cfg)}
 }
 
+// liveTranscription reports whether courier audio is sent to Meta Muse
+// Voice Transcribe (false = typed/local fallback only). A boolean only —
+// never which credential is configured.
+func (a *AIService) liveTranscription() bool {
+	_, local := a.transcriber.(ai.LocalTranscriber)
+	return !local
+}
+
 // aiConfigOf maps server config to the AI client config. Credentials come
 // from env only and never appear in any API response.
 func aiConfigOf(cfg *config.Config) ai.Config {
@@ -57,6 +69,10 @@ func aiConfigOf(cfg *config.Config) ai.Config {
 // logAICall persists one ai_calls row (feature, model, latency, tokens,
 // integer cost). Logging never fails the caller.
 func (s *Server) logAICall(ctx context.Context, rec ai.CallRecord) {
+	// Timed-out calls are exactly the ones worth logging, but their context
+	// is already done: write with a detached, bounded context instead.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aiLogTimeout)
+	defer cancel()
 	_, _ = s.db.Exec(ctx, `INSERT INTO ai_calls(feature,model,prompt_version,latency_ms,
 		input_tokens,output_tokens,cost_micros,fallback,error) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 		rec.Feature, rec.Model, rec.PromptVersion, rec.LatencyMs,
@@ -96,13 +112,15 @@ func (s *Server) finishAIJob(ctx context.Context, kind, key, status, result, err
 		WHERE kind=$1 AND job_key=$2`, kind, key, status, result, errText)
 }
 
-// fileBytes loads local upload bytes for vision/crop inputs.
+// fileBytes loads a ready upload's bytes for vision/crop inputs through the
+// storage layer: R2 objects (s3:// keys) via the S3 client, legacy local
+// uploads from disk. Reads are capped at the 5 MiB upload limit.
 func (s *Server) fileBytes(ctx context.Context, fileID string) (bytes []byte, contentType string, sha string, err error) {
 	var path string
 	if err = s.db.QueryRow(ctx, `SELECT storage_path, content_type FROM files WHERE id=$1 AND status='ready'`, fileID).Scan(&path, &contentType); err != nil {
 		return nil, "", "", err
 	}
-	bytes, err = os.ReadFile(path)
+	bytes, err = s.st.Read(ctx, path)
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -131,12 +149,14 @@ func (s *Server) handleAIMenuImport(ctx context.Context, importJobID string) {
 	usedFallback := false
 	photoSHA := ""
 	if fileID != nil {
-		if b, ct, sha, err := s.fileBytes(ctx, *fileID); err == nil {
+		if b, ct, sha, err := s.fileBytes(ctx, *fileID); err != nil {
+			s.log.Warn("menu photo unreadable, using fallback", "import_job", importJobID, "err", err)
+		} else {
 			photoSHA = sha
 			if s.ai.cli.HasKey() && len(b) <= 4*1024*1024 {
 				dataURL := "data:" + ct + ";base64," + base64.StdEncoding.EncodeToString(b)
-				raw, cerr := s.ai.cli.ChatVisionJSON(ctx, "menu_import", ai.PromptMenuV1, s.ai.cli.SparkModel(),
-					ai.MenuSystemV1, "Extract every dish from this menu photo for languages en, id, ms.", dataURL, "menu", ai.MenuSchema(), s.aiLog)
+				raw, cerr := s.ai.cli.ChatVisionJSON(ctx, "menu_import", ai.PromptMenuV2, s.ai.cli.SparkModel(),
+					ai.MenuSystemV2, "Extract every dish from this menu photo for languages en, id, ms.", dataURL, "menu", ai.MenuSchema(), s.aiLog)
 				if cerr == nil {
 					if parsed, verr := ai.ParseMenuOutput(raw); verr == nil {
 						out = parsed
@@ -152,7 +172,7 @@ func (s *Server) handleAIMenuImport(ctx context.Context, importJobID string) {
 	if len(out.Items) == 0 {
 		out = ai.FallbackMenu(photoSHA)
 		usedFallback = true
-		s.logAICall(ctx, ai.CallRecord{Feature: "menu_import", Model: s.ai.cli.SparkModel(), PromptVersion: ai.PromptMenuV1, Fallback: true})
+		s.logAICall(ctx, ai.CallRecord{Feature: "menu_import", Model: s.ai.cli.SparkModel(), PromptVersion: ai.PromptMenuV2, Fallback: true})
 	}
 	// SAM crops: one advisory dish box per draft (stub offline, honest log).
 	for i := range out.Items {
@@ -172,8 +192,8 @@ func (s *Server) handleAITranslate(ctx context.Context, messageID string) {
 	if !s.claimAIJob(ctx, AIJobTranslate, key) {
 		return
 	}
-	var body, lang string
-	if err := s.db.QueryRow(ctx, `SELECT body, lang FROM order_messages WHERE id=$1`, messageID).Scan(&body, &lang); err != nil {
+	var orderID, body, lang string
+	if err := s.db.QueryRow(ctx, `SELECT order_id, body, lang FROM order_messages WHERE id=$1`, messageID).Scan(&orderID, &body, &lang); err != nil {
 		s.finishAIJob(ctx, AIJobTranslate, key, "done", `{"failed":true}`, "message gone")
 		return
 	}
@@ -207,7 +227,9 @@ func (s *Server) handleAITranslate(ctx context.Context, messageID string) {
 		usedFallback = true
 		s.logAICall(ctx, ai.CallRecord{Feature: "chat_translate", Model: s.ai.cli.SparkModel(), PromptVersion: ai.PromptTranslateV1, Fallback: true})
 	}
-	_, _ = s.db.Exec(ctx, `UPDATE order_messages SET translated_body=$2, moderated=true, flagged=$3 WHERE id=$1`, messageID, translated, flagged)
+	_, _ = s.db.Exec(ctx, `UPDATE order_messages SET translated_body=$2, moderated=true, flagged=$3, translated_live=$4 WHERE id=$1`,
+		messageID, translated, flagged, !usedFallback)
+	s.notifyChatTranslated(ctx, orderID, messageID, translated, target, !usedFallback)
 	s.finishAIJob(ctx, AIJobTranslate, key, "done", fmt.Sprintf(`{"fallback":%v,"flagged":%v}`, usedFallback, flagged), "")
 }
 
@@ -263,7 +285,11 @@ func (s *Server) handleAIProofCheck(ctx context.Context, deliveryID, fileID stri
 	check := ai.FallbackProofCheck()
 	usedFallback := true
 	if s.ai.cli.HasKey() {
-		if b, ct, _, err := s.fileBytes(ctx, fileID); err == nil && len(b) <= 4*1024*1024 {
+		b, ct, _, err := s.fileBytes(ctx, fileID)
+		if err != nil {
+			s.log.Warn("proof photo unreadable, using fallback", "delivery", deliveryID, "err", err)
+		}
+		if err == nil && len(b) <= 4*1024*1024 {
 			dataURL := "data:" + ct + ";base64," + base64.StdEncoding.EncodeToString(b)
 			raw, cerr := s.ai.cli.ChatVisionJSON(ctx, "proof_check", ai.PromptProofV1, s.ai.cli.SparkModel(),
 				ai.ProofSystemV1, "Check this delivery proof photo.", dataURL, "proof", ai.ProofSchema(), s.aiLog)
@@ -323,21 +349,4 @@ func (s *Server) handleAIFeedbackLabels(ctx context.Context, orderID string) {
 	topics, _ := json.Marshal(labels.Topics)
 	_, _ = s.db.Exec(ctx, `UPDATE order_ratings SET topics=$2, abusive=$3 WHERE order_id=$1`, orderID, string(topics), labels.Abusive)
 	s.finishAIJob(ctx, AIJobFeedbackLabels, key, "done", fmt.Sprintf(`{"fallback":%v,"abusive":%v}`, usedFallback, labels.Abusive), "")
-}
-
-// aiWorkerDue keeps workOnce readable: one case per AI kind.
-func (s *Server) runAIJob(kind string, p map[string]string) {
-	ctx := context.Background()
-	switch kind {
-	case AIJobMenuImport:
-		s.handleAIMenuImport(ctx, p["import_job_id"])
-	case AIJobTranslate:
-		s.handleAITranslate(ctx, p["message_id"])
-	case AIJobTrustBrief:
-		s.handleAITrustBrief(ctx, p["user_id"])
-	case AIJobProofCheck:
-		s.handleAIProofCheck(ctx, p["delivery_id"], p["file_id"])
-	case AIJobFeedbackLabels:
-		s.handleAIFeedbackLabels(ctx, p["order_id"])
-	}
 }

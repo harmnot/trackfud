@@ -7,15 +7,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
-import { Button, Field, Note, Page } from '../components/ui';
-import { fetchApplication, isPartnerUnlocked, partnerStateOf } from '../features/profile/profileApi';
+import { Button, Field, Note, Page, TextInput } from '../components/ui';
+import { usePartner } from '../features/profile/usePartner';
 import { toActiveDelivery, toPhase, useDelivery } from '../features/delivery/deliveryStore';
 import { confirmDropoff, confirmPickup, fetchActiveDelivery, isMissingBackend, markArrived } from '../features/delivery/courierApi';
 import { useStaff } from '../features/staff/staffStore';
 import { useWallet } from '../features/wallet/walletStore';
 import { uploadViaPresign } from '../lib/api';
 import { logger } from '../lib/logger';
+import { socket } from '../lib/ws';
 import { speak } from '../lib/notify';
 import { useRun } from '../features/run/sessionStore';
 import i18n from '../i18n';
@@ -34,8 +34,7 @@ export function DeliveryPage() {
   const nudged = useRef(false);
   const staffActive = useStaff((s) => s.active);
   const staffTravel = useStaff((s) => s.travel);
-  const appQ = useQuery({ queryKey: ['delivery-application'], queryFn: fetchApplication });
-  const unlocked = isPartnerUnlocked({ partner: partnerStateOf(appQ.data?.status), staffActive });
+  const { unlocked, sanctioned, standing, isLoading: partnerLoading } = usePartner();
   const lang = (['en', 'id', 'ms'].includes(i18n.language) ? i18n.language : 'en') as 'en' | 'id' | 'ms';
 
   // Recover the live leg after a refresh: the server is the truth.
@@ -71,11 +70,44 @@ export function DeliveryPage() {
     return () => window.clearTimeout(timer);
   }, [active, lang]);
 
+  // Live leg events: the server-timed "leave now" nudge and route replans.
+  // Demo legs (offline path) ignore server frames; the timer above owns them.
+  useEffect(() => {
+    const off = socket.onMessage((msg) => {
+      const cur = useDelivery.getState().active;
+      if (!cur || cur.demo) return;
+      if (msg.type === 'delivery.leave_now' && msg.delivery_id === cur.deliveryId) {
+        nudged.current = true;
+        useDelivery.getState().nudgeHeadNow(null);
+        speak(`Head to ${cur.merchantName} now.`, { lang });
+      }
+      if (msg.type === 'delivery.eta' && msg.delivery_id === cur.deliveryId) {
+        useDelivery.getState().setEta(msg.eta_s);
+      }
+    });
+    return off;
+  }, [lang]);
+
   if (!active) {
     return (
       <Page>
         <h1 className="tb-display">{t('delivery.none')}</h1>
-        {appQ.isSuccess && !unlocked && (
+        {!partnerLoading && sanctioned && (
+          <div className="mt-3">
+            <Note tone="error">
+              {standing === 'frozen'
+                ? t('account.frozen', {
+                    defaultValue:
+                      'Your courier account is temporarily frozen — you cannot go online or receive offers. Contact the review team to appeal.',
+                  })
+                : t('account.banned', {
+                    defaultValue:
+                      'Your courier account is permanently closed. You cannot go online or receive offers.',
+                  })}
+            </Note>
+          </div>
+        )}
+        {!partnerLoading && !unlocked && (
           <div className="tb-card mt-3">
             <p className="text-sm font-bold">{t('account.partnerTitle')}</p>
             <p className="tb-sub mt-1">{t('account.deliveryLocked')}</p>
@@ -191,11 +223,29 @@ export function DeliveryPage() {
     <Page>
       <h1 className="tb-display">{active.merchantName}</h1>
       <p className="tb-sub">{t('delivery.promise')}</p>
+      {!partnerLoading && sanctioned && (
+        <div className="mt-3">
+          <Note tone="error">
+            {standing === 'frozen'
+              ? t('account.frozen', {
+                  defaultValue:
+                    'Your courier account is temporarily frozen — you cannot go online or receive offers. Contact the review team to appeal.',
+                })
+              : t('account.banned', {
+                  defaultValue:
+                    'Your courier account is permanently closed. You cannot go online or receive offers.',
+                })}
+          </Note>
+        </div>
+      )}
       {staffActive && (
         <div className="mt-3"><Note tone="info">{t('staff.delivering', { travel: t(`staff.travel_${staffTravel}`) })}</Note></div>
       )}
       {active.headNow && (active.phase === 'assigned' || active.phase === 'to_pickup') && (
         <div className="mt-3"><Note tone="info">{t('delivery.headNow', { name: active.merchantName })}</Note></div>
+      )}
+      {active.etaS !== null && (
+        <div className="mt-3"><Note tone="info">{t('delivery.eta', { mins: Math.max(1, Math.round(active.etaS / 60)) })}</Note></div>
       )}
       {active.demo && (
         <div className="mt-3"><Note tone="info">{t('run.demoOffer')}</Note></div>
@@ -209,7 +259,7 @@ export function DeliveryPage() {
             </a>
           </div>
         </div>
-        <p className="tb-sub mt-2">{t('delivery.betaWarn')}</p>
+        <p className="tb-sub mt-2">{active.routeWarning ?? t('delivery.betaWarn')}</p>
       </div>
 
       {(active.phase === 'assigned' || active.phase === 'to_pickup') && (
@@ -224,9 +274,11 @@ export function DeliveryPage() {
       )}
       {active.phase === 'at_pickup' && (
         <div className="tb-card mt-3">
+          <p className="tb-sub">{t('delivery.stepPickup', { defaultValue: 'Step 1 of 2 · pickup at the restaurant' })}</p>
           <Field label={t('delivery.pickupCode')}>
-            <input className="tb-input tb-code" inputMode="numeric" maxLength={4} value={code} onChange={(e) => setCode(e.target.value)} placeholder="••••" aria-label={t('delivery.pickupCode')} />
+            <TextInput className="tb-code" inputMode="numeric" maxLength={4} value={code} onChange={setCode} placeholder="••••" aria-label={t('delivery.pickupCode')} />
           </Field>
+          <p className="tb-sub mt-1">{t('delivery.pickupWho', { defaultValue: 'Merchant code — ask staff to show their screen. Never ask the customer for this.' })}</p>
           <div className="mt-2"><Button block variant="sun" disabled={busy} onClick={() => void doPickup()}>{t('delivery.confirmPickup')}</Button></div>
         </div>
       )}
@@ -237,9 +289,11 @@ export function DeliveryPage() {
       )}
       {active.phase === 'at_dropoff' && (
         <div className="tb-card mt-3">
+          <p className="tb-sub">{t('delivery.stepDropoff', { defaultValue: 'Step 2 of 2 · handover to the customer' })}</p>
           <Field label={t('delivery.pin')}>
-            <input className="tb-input tb-code" inputMode="numeric" maxLength={4} value={pin} onChange={(e) => setPin(e.target.value)} placeholder="••••" aria-label={t('delivery.pin')} />
+            <TextInput className="tb-code" inputMode="numeric" maxLength={4} value={pin} onChange={setPin} placeholder="••••" aria-label={t('delivery.pin')} />
           </Field>
+          <p className="tb-sub mt-1">{t('delivery.pinWho', { defaultValue: 'Customer PIN — ask the customer to tell you face to face. Never ask the merchant for this.' })}</p>
           <div className="mt-2"><Button block variant="sun" disabled={busy} onClick={() => void doPin()}>{t('delivery.confirmPin')}</Button></div>
           <div className="mt-2">
             <label className="tb-btn tb-btn-soft tb-btn-block">

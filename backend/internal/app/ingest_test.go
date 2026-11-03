@@ -114,6 +114,54 @@ func TestAccumulateStatsSpeedCapExcluded(t *testing.T) {
 	}
 }
 
+// batchWrite runs one batch through the ingest pipeline (filter → stats →
+// position) for a session whose stored state is prev (HasLast=false: new).
+func batchWrite(prev StatsDelta, pts []IngestPoint, now time.Time) (PositionWrite, FilterStats) {
+	kept, st, ok := FilterBatch(pts, prev.LastTs, prev.HasLast, now, 30, 30)
+	if !ok {
+		return PositionWrite{}, st
+	}
+	d := AccumulateStats(prev.LastLat, prev.LastLng, prev.LastTs, prev.HasLast, kept,
+		25.0/3.6, 0.5, 5.0/3.6, 30)
+	return BatchPosition(len(kept), d, now), st
+}
+
+// Only accepted fixes move last_pos/last_point_ts/last_seen_at: a brand-new
+// session whose first batch is all indoor-grade fixes must stay unpositioned
+// (it used to land on (0,0) at 0001-01-01), and a rejected-only batch never
+// refreshes a positioned session's fix or liveness clock.
+func TestBatchPositionOnlyFromAcceptedFixes(t *testing.T) {
+	now := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
+	base := now.Add(-time.Minute)
+
+	pos, st := batchWrite(StatsDelta{}, mkPts(base, 3, 2.5/111320.0, 45), now)
+	if pos.Moved() || pos.Lat != nil || pos.Lng != nil || pos.SeenAt != nil || pos.PointTs != nil {
+		t.Fatalf("new session + rejected-only batch must write no position, got %+v", pos)
+	}
+	if st.SkippedAccuracy != 3 {
+		t.Fatalf("want 3 accuracy skips, got %+v", st)
+	}
+
+	prev := StatsDelta{LastLat: -6.2, LastLng: 106.8, LastTs: base.Add(-30 * time.Second), HasLast: true}
+	if pos, _ := batchWrite(prev, mkPts(base, 3, 2.5/111320.0, 45), now); pos.Moved() {
+		t.Fatalf("positioned session + rejected-only batch must keep its stored fix, got %+v", pos)
+	}
+	stale := mkPts(base.Add(-time.Hour), 2, 2.5/111320.0, 8) // redelivered, older than LastTs
+	if pos, st := batchWrite(prev, stale, now); pos.Moved() || st.SkippedStale != 2 {
+		t.Fatalf("stale-only redelivery must not move the session, got %+v / %+v", pos, st)
+	}
+
+	mixed := mkPts(base, 3, 2.5/111320.0, 45)
+	mixed[1].AccuracyM = 8 // the one trusted fix
+	pos, _ = batchWrite(StatsDelta{}, mixed, now)
+	if !pos.Moved() || *pos.Lat != mixed[1].Lat || *pos.Lng != mixed[1].Lng {
+		t.Fatalf("the accepted fix must become last_pos, got %+v", pos)
+	}
+	if !pos.PointTs.Equal(mixed[1].Ts) || !pos.SeenAt.Equal(now) {
+		t.Fatalf("point time = accepted fix, seen = receive time; got %v / %v", *pos.PointTs, *pos.SeenAt)
+	}
+}
+
 func TestBearingDeg(t *testing.T) {
 	if b := BearingDeg(0, 0, 0, 1); b < 89.9 || b > 90.1 {
 		t.Fatalf("east bearing 90, got %f", b)

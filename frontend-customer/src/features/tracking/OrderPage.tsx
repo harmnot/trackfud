@@ -1,19 +1,23 @@
 /** Live order tracking: status timeline, LiveMap, courier card, customer PIN.
- * Push + WS `order.status` updates invalidate the order query; the page never
- * reloads mid-order. Courier GPS arrives with the B4 feed; until then the
- * marker animates between status waypoints. */
+ * Push + WS `order.status` updates invalidate the order query; WS
+ * `courier.location` frames move the courier dot in the cached order at once
+ * (the 10 s poll stays the fallback); the page never reloads mid-order.
+ * Without a shared courier position the schematic marker follows status
+ * waypoints. When dispatch gives up (`delivery.status` = `no_courier`) the
+ * courier slot shows the no-courier choices instead; after a switch to
+ * pickup it shows how to collect at the counter (no PIN, no courier chat). */
 
 import { useState } from 'react';
 import { Link, useParams } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 import { formatMoney, unitFor } from '../../lib/format';
-import { Button, Note, Page, Skeleton } from '../../components/ui';
+import { Button, LoadMore, Note, Page, Skeleton, TextInput, useDebouncedValue } from '../../components/ui';
 import i18n from '../../i18n';
-import { cancelOrder, listOrders } from '../orders/api';
-import { useOrder } from '../orders/hooks';
-import { useLiveOrderStatus } from '../orders/live';
+import { cancelOrder } from '../orders/api';
+import { useOrder, useOrders } from '../orders/hooks';
+import { useLiveOrder } from '../orders/live';
 import { toCourierInfo, type OrderStatus } from '../orders/types';
 import { ChatPanel } from '../postdelivery/ChatPanel';
 import { CheerPanel } from '../postdelivery/CheerPanel';
@@ -22,6 +26,8 @@ import { NoCourierPanel } from '../postdelivery/NoCourierPanel';
 import { PinHandover } from '../postdelivery/PinHandover';
 import { RatingsSection } from '../postdelivery/RatingForms';
 import { ReceiptCard } from '../postdelivery/ReceiptSync';
+import { SelfPickupCard } from '../postdelivery/SelfPickupCard';
+import { isSelfPickup, needsNoCourierChoice } from '../postdelivery/types';
 import { CourierCard } from './CourierCard';
 import { LiveMap } from './LiveMap';
 import { StatusTimeline } from './StatusTimeline';
@@ -54,7 +60,8 @@ export function OrderPage() {
   const { id } = useParams();
   const orderId = id ?? '';
   const detail = useOrder({ id: orderId });
-  useLiveOrderStatus({ orderId });
+  const qc = useQueryClient();
+  useLiveOrder({ orderId });
   const [cancelMsg, setCancelMsg] = useState('');
   const [cancelling, setCancelling] = useState(false);
 
@@ -82,9 +89,14 @@ export function OrderPage() {
     );
   }
 
-  const { order } = detail.data;
+  const { order, delivery } = detail.data;
+  // One courier slot, three exclusive states: dispatch gave up (choices),
+  // the customer collects it themselves, or the regular courier card.
+  const choiceNeeded = needsNoCourierChoice({ status: order.status, delivery });
+  const selfPickup = isSelfPickup({ status: order.status, delivery });
   const canCancel = order.status === 'awaiting_payment' || order.status === 'placed';
-  const chatting = order.status === 'accepted' || order.status === 'ready' || order.status === 'picked_up';
+  const chatting = !selfPickup &&
+    (order.status === 'accepted' || order.status === 'ready' || order.status === 'picked_up');
   const done = order.status === 'delivered' || order.status === 'completed';
   const closed = done || order.status === 'cancelled' || order.status === 'rejected';
 
@@ -94,7 +106,10 @@ export function OrderPage() {
     try {
       const res = await cancelOrder({ id: order.id });
       setCancelMsg(res.refunded ? t('track.cancelledRefund') : t('track.cancelled'));
-      void detail.refetch();
+      // A cancel refunds the held total, so the wallet cache must refresh too.
+      await qc.invalidateQueries({ queryKey: ['wallet'] });
+      await qc.invalidateQueries({ queryKey: ['orders'] });
+      await detail.refetch();
     } catch {
       setCancelMsg(t('common.error'));
     } finally {
@@ -104,9 +119,8 @@ export function OrderPage() {
 
   const pickup = shop.data ? { lat: shop.data.lat, lng: shop.data.lng, label: shop.data.name } : null;
   const drop = order.dropoff ? { ...order.dropoff, label: t('track.home') } : null;
-  const delivery = detail.data.delivery;
   const courier = delivery?.courier ? toCourierInfo(delivery.courier) : null;
-  const courierDot = delivery?.courierLast ? { lat: delivery.courierLast.lat, lng: delivery.courierLast.lng } : null;
+  const courierDot = delivery?.courierLast ?? null;
 
   return (
     <Page>
@@ -119,19 +133,40 @@ export function OrderPage() {
             <LiveMap
               pickup={pickup}
               dropoff={drop}
-              courier={courierDot}
-              progress={progressFor(order.status)}
-              etaText={etaText({ windowEnd: order.window_end, readyAt: order.ready_at_est, t })}
-              statusText={t(`track.d_${order.status === 'completed' ? 'delivered' : order.status}`)}
+              courier={courierDot && delivery?.courier
+                ? {
+                    pos: { lat: courierDot.lat, lng: courierDot.lng },
+                    name: delivery.courier.firstName === '' ? '?' : delivery.courier.firstName,
+                    mode: delivery.courier.mode,
+                    updatedAt: courierDot.at,
+                  }
+                : null}
+              routePolyline={delivery?.routePolyline ?? ''}
+              routeWarning={delivery?.routeWarning ?? ''}
+              progress={selfPickup ? 0 : progressFor(order.status)}
+              etaText={etaText({ windowEnd: selfPickup ? null : order.window_end, readyAt: order.ready_at_est, t })}
+              statusText={selfPickup
+                ? t('nocourier.pickupTitle')
+                : t(`track.d_${order.status === 'completed' ? 'delivered' : order.status}`)}
             />
           </div>
         )}
       </div>
-      <div className="mt-3">
-        <CourierCard courier={courier} unit={unitFor(i18n.language)} />
-      </div>
-      <PinHandover pin={order.delivery_pin} status={order.status} />
-      <NoCourierPanel order={order} />
+      {!choiceNeeded && !selfPickup && (
+        <div className="mt-3">
+          <CourierCard
+            courier={courier}
+            unit={unitFor(i18n.language)}
+            status={order.status}
+            loading={detail.isFetching}
+            error={detail.isError ? t('common.error') : null}
+            onRetry={() => void detail.refetch()}
+          />
+        </div>
+      )}
+      {selfPickup && <SelfPickupCard order={order} />}
+      <NoCourierPanel order={order} delivery={delivery} />
+      {!selfPickup && <PinHandover pin={order.delivery_pin} status={order.status} />}
       {chatting && (
         <>
           <CheerPanel orderId={order.id} />
@@ -141,7 +176,8 @@ export function OrderPage() {
       {done && (
         <>
           <RatingsSection orderId={order.id} />
-          <ImpactCard order={order} />
+          {/* A staff delivery is not a workout: no "you powered X km" card. */}
+          {delivery?.kind !== 'staff' && <ImpactCard order={order} />}
         </>
       )}
       {closed && detail.data && (
@@ -167,13 +203,28 @@ export function OrderPage() {
   );
 }
 
-/** Recent orders list linking into live tracking. */
+/** Recent orders list linking into live tracking (scroll-paginated, code search). */
 export function OrdersPage() {
   const { t } = useTranslation();
-  const orders = useQuery({ queryKey: ['orders'], queryFn: listOrders });
+  const [search, setSearch] = useState('');
+  const q = useDebouncedValue(search, 300);
+  const orders = useOrders({ q });
+  const rows = orders.data?.pages.flatMap((p) => p.orders) ?? [];
+  // Every scroll page carries the same server-side total; the last page holds
+  // the freshest count (search narrows reset pages, so never reuse a stale one).
+  const pages = orders.data?.pages ?? [];
+  const total = pages.length > 0 ? (pages[pages.length - 1]?.total ?? rows.length) : rows.length;
   return (
     <Page>
       <h1 className="tb-display">{t('track.ordersTitle')}</h1>
+      <div className="mt-3">
+        <TextInput
+          aria-label={t('track.searchOrders')}
+          placeholder={t('track.searchOrdersPh')}
+          value={search}
+          onChange={setSearch}
+        />
+      </div>
       {orders.isLoading && <div className="flex flex-col gap-2 mt-3"><Skeleton height={80} /><Skeleton height={80} /></div>}
       {orders.isError && (
         <div className="mt-3 flex flex-col gap-2">
@@ -181,8 +232,13 @@ export function OrdersPage() {
           <Button variant="soft" size="sm" onClick={() => void orders.refetch()}>{t('common.retry')}</Button>
         </div>
       )}
+      {!orders.isLoading && !orders.isError && rows.length > 0 && (
+        <p className="tb-sub mt-3" role="status">
+          {t('track.showingOf', { shown: rows.length, total: total ?? rows.length })}
+        </p>
+      )}
       <div className="flex flex-col gap-2 mt-3">
-        {(orders.data ?? []).map((o) => (
+        {rows.map((o) => (
           <Link key={o.id} to={`/order/${o.id}`} className="tb-line-row" style={{ textDecoration: 'none', color: 'inherit' }}>
             <span className="flex-1 min-w-0">
               <strong className="block truncate">{o.code} · {t(`track.s_${o.status}`)}</strong>
@@ -191,13 +247,21 @@ export function OrdersPage() {
             <span aria-hidden="true">→</span>
           </Link>
         ))}
-        {orders.data?.length === 0 && (
+        {!orders.isLoading && !orders.isError && rows.length === 0 && (
           <div className="mt-3 flex flex-col gap-2">
             <p className="tb-sub">{t('track.noOrders')}</p>
             <p><Link to="/" className="tb-btn tb-btn-ember tb-btn-sm">{t('nav.home')}</Link></p>
           </div>
         )}
       </div>
+      {!orders.isLoading && (
+        <LoadMore
+          hasMore={orders.hasNextPage ?? false}
+          loading={orders.isFetchingNextPage}
+          label={t('track.loadMore')}
+          onLoad={() => void orders.fetchNextPage()}
+        />
+      )}
     </Page>
   );
 }

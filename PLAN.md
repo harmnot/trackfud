@@ -88,7 +88,7 @@
 1. **Voice Copilot** (Muse Voice Transcribe realtime + Muse Spark tool calling). Couriers say "accept", "how far?" or "tell the customer I'm 2 minutes away". It works hands-free while running, in 25 languages.
 2. **Snap-a-Menu** (Muse Spark vision + structured output + SAM 3.1):
     - A photo becomes a full menu in many languages, with clean dish pictures.
-    - Each item gets **workout-delivery** labels (size, spill risk, **travels well for 30–60 min**), and the dispatch engine and menu use them.
+    - Each item gets **workout-delivery** labels (size, **travels well for 30–60 min**), and the dispatch engine and menu use them.
 3. **Trust Brief** (Muse Spark + SAM 3.1). AI checks the courier's test run for cheating, reads the ID and checks delivery photos. The **admin decides**.
 4. **Translated chat + moderation** between courier and customer.
 5. **AI Coach report** (Muse Spark): a weekly summary of distance, active minutes and earnings, with a gentle plan for next week. Not medical advice.
@@ -143,7 +143,7 @@
 | Criterion (weight)        | Judges ask                                             | What we show                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Where                  |
 | ------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
 | **Impact (30%)**          | Who benefits? Will people use it? Does it fit a theme? | **Health first:** 31% of adults don't move enough [37]. Every order gives someone paid active minutes toward WHO's 150 min/week [38], and the dashboard counts them. Runners and bikers earn while training. Restaurants pay 10% instead of 15–30%. Staff earn extra. Customers pay less and see their impact. No tailpipe emissions. Global settings (currency, language, units, per-country rules).                                                                | §0, §12, §13           |
-| **Use of Meta AI (25%)**  | Creative? Beyond basic? Surprising?                    | 4 AI features inside the core loop, using 4 Meta capabilities: (1) realtime speech with **keyword biasing from the live order** and **code-switching** (e.g. Indonesian + English mixed); (2) tool calling with **server-checked confirmations**; (3) vision + structured output that **becomes dispatch rules** (runner-safe size and spill risk); (4) **SAM 3.1** for dish crops, ID crops and bag detection. An "AI under the hood" panel lists every model call. | §10                    |
+| **Use of Meta AI (25%)**  | Creative? Beyond basic? Surprising?                    | 4 AI features inside the core loop, using 4 Meta capabilities: (1) realtime speech with **keyword biasing from the live order** and **code-switching** (e.g. Indonesian + English mixed); (2) tool calling with **server-checked confirmations**; (3) vision + structured output that **becomes dispatch rules** (runner-safe size classes); (4) **SAM 3.1** for dish crops, ID crops and bag detection. An "AI under the hood" panel lists every model call. | §10                    |
 | **Technical depth (20%)** | Is the engineering sound and refined?                  | Track-corridor dispatch in PostGIS. Two linked state machines. Double-entry ledger with idempotent webhooks. Jobs queued in the same database transaction (River). Offline GPS buffer and anti-cheat. Podman Quadlet deploy. End-to-end tests with several users at once.                                                                                                                                                                                            | §5–7, §11, §14–19, §22 |
 | **Demo (25%)**            | Does it work live? Is the video cool to watch?         | Real footage of a runner. Split screen of the 4 apps. Accepting an order by voice while running. Judge mode + simulator, so it works from anywhere.                                                                                                                                                                                                                                                                                                                  | §20                    |
 
@@ -196,7 +196,7 @@
     - **AI-planned track:** stretch goal, §10.
 3. An order is offered only when **the restaurant is close to the track**, and the customer is within the range for that mode.
 4. The courier **keeps running while the food cooks**. The app tells them when to turn toward the restaurant, timed to "ready".
-5. Runners carry small, low-spill orders over short distances. Bikers can take bigger and longer ones.
+5. Runners carry small orders over short distances. Bikers can take bigger and longer ones.
 6. If nobody accepts, **restaurant staff** can deliver it (§3).
 
 **Default settings** (stored in config, editable per country in the CMS)
@@ -207,7 +207,6 @@
 | Max distance from courier to restaurant              | 1.5 km | 3 km        |
 | Max distance from restaurant to customer             | 3 km   | 7 km        |
 | Allowed order size                                   | S, M   | S, M, L     |
-| Allowed spill risk                                   | low    | low, medium |
 | Planning speed while carrying food                   | 9 km/h | 16 km/h     |
 | Time to accept an offer                              | 30 s   | 30 s        |
 | Max carry time (pickup → customer)                   | 25 min | 30 min      |
@@ -387,7 +386,7 @@ Dashboard (live map + numbers) → Applications (Trust Brief) → approve / reje
 | Opening hours + prep time            | P0       | In the merchant's time zone                                                                     |
 | Partner Agreement e-sign             | P0       | Versioned; includes the staff fallback clause (§8.5)                                            |
 | **Snap-a-Menu**                      | P0       | §10.B                                                                                           |
-| Menu edit                            | P0       | Items, prices, photos, sold-out toggle, size/spill labels                                       |
+| Menu edit                            | P0       | Items, prices, photos, sold-out toggle, size labels                                             |
 | Incoming orders                      | P0       | Loud sound, accept + prep time, reject                                                          |
 | Mark ready + confirm pickup          | P0       |                                                                                                 |
 | Staff: invite, can-deliver, on-shift | P0       |                                                                                                 |
@@ -478,7 +477,7 @@ Coordinates are stored as `geography(Point, 4326)`. Tracks are `geography(LineSt
 ```sql
 -- name: DispatchCandidates :many
 WITH o AS (
-  SELECT o.id, o.dropoff, o.size_class, o.spill_risk, m.location AS pickup
+  SELECT o.id, o.dropoff, o.size_class, m.location AS pickup
   FROM orders o JOIN merchants m ON m.id = o.merchant_id
   WHERE o.id = @order_id
 )
@@ -502,20 +501,20 @@ WHERE s.kind = 'work' AND s.status = 'active'
     (c.mode = 'runner'
       AND ST_DWithin(s.last_pos, o.pickup, @run_max_to_pickup_m)
       AND ST_DWithin(o.pickup, o.dropoff, @run_max_trip_m)
-      AND o.size_class = ANY(@run_sizes::text[]) AND o.spill_risk = ANY(@run_spill::text[])
+      AND o.size_class = ANY(@run_sizes::text[])
       AND (s.planned_track IS NULL OR ST_DWithin(s.planned_track, o.pickup, @run_corridor_m)))
     OR
     (c.mode = 'biker'
       AND ST_DWithin(s.last_pos, o.pickup, @bike_max_to_pickup_m)
       AND ST_DWithin(o.pickup, o.dropoff, @bike_max_trip_m)
-      AND o.size_class = ANY(@bike_sizes::text[]) AND o.spill_risk = ANY(@bike_spill::text[])
+      AND o.size_class = ANY(@bike_sizes::text[])
       AND (s.planned_track IS NULL OR ST_DWithin(s.planned_track, o.pickup, @bike_corridor_m)))
   )
 ORDER BY to_pickup_m
 LIMIT 20;
 ```
 
-- An order's `size_class` and `spill_risk` are the "worst" values among its items. **They come from Snap-a-Menu (AI)**, so AI output becomes a real dispatch rule.
+- An order's `size_class` is the "worst" value among its items. **It comes from Snap-a-Menu (AI)**, so AI output becomes a real dispatch rule.
 - P1: match only the **part of the track still ahead**. Use `ST_LineLocatePoint` and `ST_LineSubstring` on `::geometry`.
 - Tip for sqlc: keep geography inside SQL. Pass plain `lat`/`lng` numbers in and out: `ST_SetSRID(ST_MakePoint(@lng, @lat), 4326)::geography`.
 

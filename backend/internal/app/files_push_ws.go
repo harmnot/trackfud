@@ -22,7 +22,9 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// ---------- Files (local presign for Milestone 1; same contract as R2 presign) ----------
+// ---------- Files (R2 live with local fallback; same presign contract) ----------
+// Public bucket: menus/avatars. Private bucket: IDs/selfie/proof/agreements.
+// Presigned URLs expire in 5 minutes (storage.PresignTTL).
 func (s *Server) signUpload(fileID string, exp int64) string {
 	mac := hmac.New(sha256.New, []byte(s.cfg.JWTSecret))
 	mac.Write([]byte(fileID + ":" + strconv.FormatInt(exp, 10)))
@@ -57,14 +59,70 @@ func (s *Server) presign(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "Server error", err.Error())
 		return
 	}
+	// Live R2: presigned PUT to the right bucket (public: menus/avatars,
+	// private: IDs/selfie/proof/agreements), 5-min expiry. The storage key
+	// is saved now so completeUpload can mark it ready after the PUT.
+	if s.st.Configured() {
+		uploadURL, storageKey, err := s.st.PresignPUT(r.Context(), b.Bucket, id, b.ContentType)
+		if err != nil {
+			problem(w, 500, "Server error", "storage presign failed")
+			return
+		}
+		_, _ = s.db.Exec(r.Context(), `UPDATE files SET storage_path=$2 WHERE id=$1`, id, storageKey)
+		exp := time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339)
+		writeJSON(w, 201, map[string]any{"file_id": id, "upload_url": uploadURL, "expires_at": exp, "bucket": b.Bucket, "storage": "r2"})
+		return
+	}
 	exp := time.Now().Add(5 * time.Minute).Unix()
 	tok := s.signUpload(id, exp)
 	url := fmt.Sprintf("/api/v1/files/local/%s?token=%s&exp=%d", id, tok, exp)
-	writeJSON(w, 201, map[string]any{"file_id": id, "upload_url": url, "expires_at": time.Unix(exp, 0).UTC().Format(time.RFC3339), "bucket": b.Bucket})
+	writeJSON(w, 201, map[string]any{"file_id": id, "upload_url": url, "expires_at": time.Unix(exp, 0).UTC().Format(time.RFC3339), "bucket": b.Bucket, "storage": "local"})
+}
+
+// completeUpload marks an R2 direct upload ready after the client PUTs bytes
+// to the presigned URL. Local uploads keep using PUT /v1/files/local/{id}.
+func (s *Server) completeUpload(w http.ResponseWriter, r *http.Request) {
+	c := claims(r)
+	id := r.PathValue("id")
+	var owner, bucket, storagePath string
+	if err := s.db.QueryRow(r.Context(), `SELECT owner_id, bucket, storage_path FROM files WHERE id=$1`, id).Scan(&owner, &bucket, &storagePath); err != nil {
+		problem(w, 404, "Not found", "file not found")
+		return
+	}
+	if owner != c.Sub && !hasAdminRole(c.Roles) {
+		problem(w, 403, "Forbidden", "not your file")
+		return
+	}
+	if !s.st.Configured() || storagePath == "" || storagePath[0] != 's' {
+		problem(w, 409, "Conflict", "local upload uses PUT /v1/files/local/{id}")
+		return
+	}
+	var b struct {
+		SizeBytes int64 `json:"size_bytes"`
+	}
+	// size_bytes is optional metadata: only parse a body when the client
+	// sent one, so a bare POST still reports the real outcome below.
+	if r.ContentLength != 0 {
+		if !decode(w, r, &b) {
+			return
+		}
+	}
+	if b.SizeBytes > 0 && b.SizeBytes <= 5*1024*1024 {
+		_, _ = s.db.Exec(r.Context(), `UPDATE files SET status='ready', size_bytes=$2 WHERE id=$1`, id, b.SizeBytes)
+	} else {
+		_, _ = s.db.Exec(r.Context(), `UPDATE files SET status='ready' WHERE id=$1`, id)
+	}
+	writeJSON(w, 200, map[string]any{"file_id": id, "status": "ready", "bucket": bucket})
 }
 
 func (s *Server) localUpload(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	var storagePath string
+	_ = s.db.QueryRow(r.Context(), `SELECT storage_path FROM files WHERE id=$1`, id).Scan(&storagePath)
+	if s.st.Configured() && len(storagePath) > 5 && storagePath[:5] == "s3://" {
+		problem(w, 410, "Gone", "R2 upload uses the presigned PUT URL, then POST /v1/files/{id}/complete")
+		return
+	}
 	exp, _ := strconv.ParseInt(r.URL.Query().Get("exp"), 10, 64)
 	if time.Now().Unix() > exp || !hmac.Equal([]byte(s.signUpload(id, exp)), []byte(r.URL.Query().Get("token"))) {
 		problem(w, 403, "Forbidden", "invalid or expired upload token")
@@ -102,6 +160,54 @@ func (s *Server) fileContent(w http.ResponseWriter, r *http.Request) {
 		problem(w, 404, "Not found", "file not found")
 		return
 	}
+	// Live R2: public files redirect to the CDN/public base when configured;
+	// private files (IDs/selfie/proof/agreements) need auth then a 5-min
+	// presigned GET redirect — bytes never proxy through the API.
+	if len(path) > 5 && path[:5] == "s3://" {
+		if bucket == "private" {
+			h := r.Header.Get("Authorization")
+			if !strings.HasPrefix(h, "Bearer ") {
+				problem(w, 401, "Unauthorized", "private file requires auth")
+				return
+			}
+			cl, err := authjwt.Verify(s.cfg.JWTSecret, strings.TrimPrefix(h, "Bearer "))
+			if err != nil {
+				problem(w, 401, "Unauthorized", "invalid token")
+				return
+			}
+			ok := cl.Sub == owner
+			for _, role := range cl.Roles {
+				if role == "admin" {
+					ok = true
+				}
+			}
+			if !ok {
+				problem(w, 403, "Forbidden", "not your file")
+				return
+			}
+			signed, err := s.st.PresignGET(r.Context(), bucket, path)
+			if err != nil {
+				problem(w, 500, "Server error", "storage presign failed")
+				return
+			}
+			http.Redirect(w, r, signed, http.StatusFound)
+			return
+		}
+		if pub := s.st.PublicURL(bucket, path); pub != "" {
+			http.Redirect(w, r, pub, http.StatusFound)
+			return
+		}
+		// No bucket-bound public base (single-endpoint setup): serve public
+		// files via a 5-min presigned GET like private ones, minus the auth
+		// check — frontends load `/files/{id}/content` fresh on every view.
+		signed, err := s.st.PresignGET(r.Context(), bucket, path)
+		if err != nil {
+			problem(w, 500, "Server error", "storage presign failed")
+			return
+		}
+		http.Redirect(w, r, signed, http.StatusFound)
+		return
+	}
 	if bucket == "private" {
 		h := r.Header.Get("Authorization")
 		if !strings.HasPrefix(h, "Bearer ") {
@@ -134,8 +240,11 @@ func (s *Server) fileContent(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(b)
 }
 
-// ---------- Push ----------
+// ---------- Push (VAPID env wins, DB pair is the dev fallback) ----------
 func (s *Server) vapidKeys(r *http.Request) (string, string, error) {
+	if s.cfg.VAPIDPublicKey != "" && s.cfg.VAPIDPrivateKey != "" {
+		return s.cfg.VAPIDPublicKey, s.cfg.VAPIDPrivateKey, nil
+	}
 	var v string
 	err := s.db.QueryRow(r.Context(), `SELECT value FROM app_secrets WHERE key='vapid'`).Scan(&v)
 	if err == nil && strings.Contains(v, "|") {
@@ -209,64 +318,22 @@ func (s *Server) pushUnsubscribe(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) pushTest(w http.ResponseWriter, r *http.Request) {
 	c := claims(r)
-	_, _ = s.db.Exec(r.Context(), `INSERT INTO jobs(kind,payload) VALUES('push_send',$1)`, fmt.Sprintf(`{"user_id":%q,"title":"Trackfud test","body":"Push plumbing works (Milestone 1)."}`, c.Sub))
+	s.queuePush(c.Sub, "Trackfud test", "Push plumbing works (Milestone 1).")
 	writeJSON(w, 202, map[string]any{"queued": true})
 }
 
-// ---------- Jobs worker (Postgres queue with same-tx enqueue; River-swappable behind this worker) ----------
+// ---------- Jobs worker (River; args, workers and enqueue live in river.go) ----------
 func (s *Server) StartWorker() {
 	go func() {
-		for {
-			time.Sleep(2 * time.Second)
-			s.workOnce()
+		ctx := context.Background()
+		if s.rq == nil {
+			s.log.Error("river: worker not initialized, jobs disabled")
+			return
+		}
+		if err := s.rq.Start(ctx); err != nil {
+			s.log.Error("river: start failed", "err", err)
 		}
 	}()
-}
-
-func (s *Server) workOnce() {
-	ctx := context.Background()
-	var id, kind string
-	var payload []byte
-	err := s.db.QueryRow(ctx, `SELECT id,kind,payload FROM jobs WHERE status='pending' AND run_at<=now() ORDER BY created_at LIMIT 1`).Scan(&id, &kind, &payload)
-	if err != nil {
-		return
-	}
-	var p map[string]string
-	_ = json.Unmarshal(payload, &p)
-	var jobErr string
-	switch kind {
-	case "email_send":
-		jobErr = s.doEmail(ctx, p)
-	case "push_send":
-		jobErr = s.doPush(ctx, p)
-	case "merchant_accept_timeout":
-		s.handleMerchantTimeout(ctx, p["order_id"])
-	case "dispatch_run":
-		s.handleDispatchRun(ctx, p["delivery_id"])
-	case "offer_expire":
-		s.handleOfferExpire(ctx, p["offer_id"])
-	case "dispatch_retry":
-		s.handleDispatchRetry(ctx, p["delivery_id"])
-	case "search_timeout":
-		s.handleSearchTimeout(ctx, p["delivery_id"])
-	case "staff_timeout":
-		s.handleStaffTimeout(ctx, p["delivery_id"])
-	case "leave_now_nudge":
-		s.handleLeaveNudge(ctx, p["delivery_id"])
-	case "route_refresh":
-		s.handleRouteRefresh(ctx, p["delivery_id"])
-	case "auto_complete":
-		s.handleAutoComplete(ctx, p["order_id"])
-	case "payout_process":
-		s.handlePayoutProcess(ctx, p["withdrawal_id"])
-	case "ai_menu_import", "ai_translate", "ai_trust_brief", "ai_proof_check", "ai_feedback_labels":
-		s.runAIJob(kind, p)
-	}
-	if jobErr != "" {
-		_, _ = s.db.Exec(ctx, `UPDATE jobs SET attempts=attempts+1, last_error=$2, status=CASE WHEN attempts+1>=3 THEN 'failed' ELSE 'pending' END, run_at=now()+interval '10 seconds' WHERE id=$1`, id, jobErr)
-		return
-	}
-	_, _ = s.db.Exec(ctx, `UPDATE jobs SET status='done' WHERE id=$1`, id)
 }
 
 func (s *Server) doEmail(ctx context.Context, p map[string]string) string {
@@ -274,14 +341,36 @@ func (s *Server) doEmail(ctx context.Context, p map[string]string) string {
 	if err != nil {
 		return err.Error()
 	}
-	if s.cfg.SMTPHost != "" {
-		addr := s.cfg.SMTPHost + ":" + s.cfg.SMTPPort
-		msg := "From: no-reply@Trackfud.local\r\nTo: " + p["to"] + "\r\nSubject: " + p["subject"] + "\r\n\r\n" + p["body"]
-		if err := smtp.SendMail(addr, nil, "no-reply@Trackfud.local", []string{p["to"]}, []byte(msg)); err != nil {
-			s.log.Warn("smtp send failed (outbox kept)", "err", err)
-		}
+	if s.cfg.SMTPHost == "" {
+		return ""
+	}
+	// Header-injection guard: recipients/subjects come from job payloads.
+	to, subject := sanitizeHeader(p["to"]), sanitizeHeader(p["subject"])
+	if to == "" || !strings.Contains(to, "@") {
+		s.log.Warn("smtp skip: bad recipient (outbox kept)")
+		return ""
+	}
+	from := s.cfg.SMTPFrom
+	if from == "" {
+		from = "no-reply@Trackfud.local"
+	}
+	var auth smtp.Auth
+	if s.cfg.SMTPUser != "" {
+		// Brevo: smtp-relay.brevo.com:587 + API-key user/pass over STARTTLS.
+		auth = smtp.PlainAuth("", s.cfg.SMTPUser, s.cfg.SMTPPassword, s.cfg.SMTPHost)
+	}
+	msg := "From: " + sanitizeHeader(from) + "\r\nTo: " + to + "\r\nSubject: " + subject + "\r\n\r\n" + p["body"]
+	if err := smtp.SendMail(s.cfg.SMTPHost+":"+s.cfg.SMTPPort, auth, from, []string{to}, []byte(msg)); err != nil {
+		s.log.Warn("smtp send failed (outbox kept)", "err", err)
 	}
 	return ""
+}
+
+// sanitizeHeader strips CR/LF so job payloads cannot inject SMTP headers.
+func sanitizeHeader(v string) string {
+	v = strings.ReplaceAll(v, "\r", "")
+	v = strings.ReplaceAll(v, "\n", "")
+	return strings.TrimSpace(v)
 }
 
 func (s *Server) doPush(ctx context.Context, p map[string]string) string {
@@ -295,15 +384,21 @@ func (s *Server) doPush(ctx context.Context, p map[string]string) string {
 	}
 	defer rows.Close()
 	payload, _ := json.Marshal(map[string]string{"title": p["title"], "body": p["body"]})
-	sent := 0
+	sent, attempted, failed := 0, 0, 0
 	for rows.Next() {
 		var ep, k1, k2 string
 		if err := rows.Scan(&ep, &k1, &k2); err != nil {
 			continue
 		}
+		attempted++
 		sub := &webpush.Subscription{Endpoint: ep, Keys: webpush.Keys{P256dh: k1, Auth: k2}}
-		resp, err := webpush.SendNotificationWithContext(ctx, payload, sub, &webpush.Options{Subscriber: "mailto:demo@Trackfud.local", VAPIDPrivateKey: priv, VAPIDPublicKey: pub, TTL: 60, Urgency: webpush.UrgencyHigh})
+		subscriber := s.cfg.VAPIDSubject
+		if subscriber == "" {
+			subscriber = "mailto:demo@Trackfud.local"
+		}
+		resp, err := webpush.SendNotificationWithContext(ctx, payload, sub, &webpush.Options{Subscriber: subscriber, VAPIDPrivateKey: priv, VAPIDPublicKey: pub, TTL: 60, Urgency: webpush.UrgencyHigh})
 		if err != nil {
+			failed++
 			continue
 		}
 		_ = resp.Body.Close()
@@ -311,14 +406,24 @@ func (s *Server) doPush(ctx context.Context, p map[string]string) string {
 			_, _ = s.db.Exec(ctx, `DELETE FROM push_subscriptions WHERE endpoint=$1`, ep)
 			continue
 		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			failed++
+			continue
+		}
 		sent++
 	}
-	_ = sent
 	// No subscription yet is not an error in demo: job completes, frontend subscribe enables real delivery.
+	if attempted > 0 && sent == 0 && failed > 0 {
+		return fmt.Sprintf("push: %d subscription(s) attempted, all failed", failed)
+	}
 	return ""
 }
 
 func (s *Server) vapidKeysReq(ctx context.Context) (string, string, error) {
+	// Env pair (TF_VAPID_*) wins; DB-generated pair is the dev fallback.
+	if s.cfg.VAPIDPublicKey != "" && s.cfg.VAPIDPrivateKey != "" {
+		return s.cfg.VAPIDPublicKey, s.cfg.VAPIDPrivateKey, nil
+	}
 	var v string
 	err := s.db.QueryRow(ctx, `SELECT value FROM app_secrets WHERE key='vapid'`).Scan(&v)
 	if err == nil && strings.Contains(v, "|") {

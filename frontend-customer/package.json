@@ -3,12 +3,13 @@
     "version": "1.0.0",
     "private": true,
     "type": "module",
-    "packageManager": "pnpm@12.15.0",
+    "packageManager": "pnpm@12.16.1",
     "scripts": {
         "dev": "vite",
         "build": "tsc -b && vite build",
         "preview": "vite preview",
-        "typecheck": "tsc -b --noEmit"
+        "typecheck": "tsc -b --noEmit",
+        "smoke": "node scripts/smoke.mjs"
     },
     "dependencies": {
         "@tanstack/react-query": "5.105.0",

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
+import type { InputHTMLAttributes, ReactNode, Ref, TextareaHTMLAttributes } from 'react';
 
 /** Dark mono primitives for the Courier app (X/Grok-style components). */
 
@@ -56,9 +56,9 @@ export function Badge({ sun = false, children }: { sun?: boolean; children: Reac
   return <span className={`tb-badge${sun ? ' tb-badge-sun' : ''}`}>{children}</span>;
 }
 
-export function Note({ tone, children }: { tone: 'info' | 'error'; children: ReactNode }) {
+export function Note({ tone, children, className = '' }: { tone: 'info' | 'error'; children: ReactNode; className?: string }) {
   return (
-    <div className={`tb-note tb-note-${tone}`} role={tone === 'error' ? 'alert' : 'status'}>
+    <div className={`tb-note tb-note-${tone}${className ? ` ${className}` : ''}`} role={tone === 'error' ? 'alert' : 'status'}>
       {children}
     </div>
   );
@@ -209,3 +209,276 @@ export function FileUpload({
     </div>
   );
 }
+
+export function Switch({
+  checked,
+  onChange,
+  label,
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: ReactNode;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="tb-switch">
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+      <span className="tb-track" aria-hidden />
+      {label}
+    </label>
+  );
+}
+
+export type SelectOption = { value: string; label: string };
+
+type FieldText = { label?: ReactNode; hint?: ReactNode; error?: ReactNode };
+
+/** Hi-fi single-line text field: design-system input + label/hint/error. */
+export function TextInput({
+  label,
+  hint,
+  error,
+  value,
+  onChange,
+  inputRef,
+  className = '',
+  ...rest
+}: FieldText & {
+  value: string;
+  onChange: (v: string) => void;
+  inputRef?: Ref<HTMLInputElement>;
+  className?: string;
+} & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'label'>) {
+  const autoId = useId();
+  const id = rest.id ?? autoId;
+  return (
+    <>
+      {label ? <label className="tb-label" htmlFor={id}>{label}</label> : null}
+      <input
+        {...rest}
+        id={id}
+        ref={inputRef}
+        className={`tb-input${error ? ' tb-input-error' : ''}${className ? ` ${className}` : ''}`}
+        aria-invalid={error ? true : undefined}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {error ? <span className="tb-field-error" role="alert">{error}</span>
+        : hint ? <span className="tb-field-hint">{hint}</span> : null}
+    </>
+  );
+}
+
+/** Hi-fi multi-line field: same system, taller, vertical resize. */
+export function TextArea({
+  label,
+  hint,
+  error,
+  value,
+  onChange,
+  rows = 3,
+  className = '',
+  ...rest
+}: FieldText & {
+  value: string;
+  onChange: (v: string) => void;
+  rows?: number;
+  className?: string;
+} & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange' | 'label'>) {
+  const autoId = useId();
+  const id = rest.id ?? autoId;
+  return (
+    <>
+      {label ? <label className="tb-label" htmlFor={id}>{label}</label> : null}
+      <textarea
+        {...rest}
+        id={id}
+        rows={rows}
+        className={`tb-input${error ? ' tb-input-error' : ''}${className ? ` ${className}` : ''}`}
+        aria-invalid={error ? true : undefined}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {error ? <span className="tb-field-error" role="alert">{error}</span>
+        : hint ? <span className="tb-field-hint">{hint}</span> : null}
+    </>
+  );
+}
+
+/** Modern hi-fi native select: styled wrapper + chevron, keeps native sheet on mobile. */
+export function Select({
+  label,
+  hint,
+  error,
+  value,
+  options,
+  onChange,
+  ariaLabel,
+  disabled = false,
+  className = '',
+}: FieldText & {
+  value: string;
+  options: SelectOption[];
+  onChange: (v: string) => void;
+  ariaLabel?: string;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const autoId = useId();
+  return (
+    <>
+      {label ? <label className="tb-label" htmlFor={autoId}>{label}</label> : null}
+      <span className="tb-select">
+        <select
+          id={autoId}
+          className={`tb-input tb-select-input${error ? ' tb-input-error' : ''}${className ? ` ${className}` : ''}`}
+          value={value}
+          aria-label={ariaLabel ?? (typeof label === 'string' ? label : undefined)}
+          disabled={disabled}
+          aria-invalid={error ? true : undefined}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          {options.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </span>
+      {error ? <span className="tb-field-error" role="alert">{error}</span>
+        : hint ? <span className="tb-field-hint">{hint}</span> : null}
+    </>
+  );
+}
+
+/** Modern segmented radio group (single-select pills, full keyboard support). */
+export function RadioGroup({
+  label,
+  hint,
+  error,
+  name,
+  value,
+  options,
+  onChange,
+  ariaLabel,
+  disabled = false,
+}: FieldText & {
+  name: string;
+  value: string;
+  options: SelectOption[];
+  onChange: (v: string) => void;
+  ariaLabel?: string;
+  disabled?: boolean;
+}) {
+  const autoId = useId();
+  return (
+    <>
+      {label ? <span className="tb-label" id={autoId}>{label}</span> : null}
+      <span
+        className="tb-radio-group"
+        role="radiogroup"
+        aria-labelledby={label ? autoId : undefined}
+        aria-label={label ? undefined : ariaLabel}
+      >
+        {options.map((o) => {
+          const active = o.value === value;
+          return (
+            <label key={o.value} className={`tb-radio-pill${active ? ' on' : ''}`}>
+              <input
+                type="radio"
+                name={name}
+                value={o.value}
+                checked={active}
+                disabled={disabled}
+                onChange={() => onChange(o.value)}
+              />
+              {o.label}
+            </label>
+          );
+        })}
+      </span>
+      {error ? <span className="tb-field-error" role="alert">{error}</span>
+        : hint ? <span className="tb-field-hint">{hint}</span> : null}
+    </>
+  );
+}
+
+/** Hi-fi custom radio dot for list/card rows (same motion language as Check).
+ * Root is a span (not a label) so rows can stay a single accessible <label>
+ * without nesting labels; dot taps forward to the native input. */
+export function Radio({
+  checked,
+  onChange,
+  ariaLabel,
+  name,
+  value,
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  ariaLabel: string;
+  name?: string;
+  value?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <span
+      className="tb-radio"
+      onClick={(e) => {
+        if (e.target instanceof HTMLInputElement) return;
+        e.currentTarget.querySelector('input')?.click();
+      }}
+    >
+      <input
+        type="radio"
+        name={name}
+        value={value}
+        checked={checked}
+        disabled={disabled}
+        aria-label={ariaLabel}
+        onChange={onChange}
+      />
+      <span className="tb-radio-dot" aria-hidden />
+    </span>
+  );
+}
+
+/** Modern checkbox row with custom box. */
+export function Check({
+  checked,
+  onChange,
+  label,
+  hint,
+  error,
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: ReactNode;
+  hint?: ReactNode;
+  error?: ReactNode;
+  disabled?: boolean;
+}) {
+  return (
+    <>
+      <label className="tb-check">
+        <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+        <span className="tb-box" aria-hidden>
+          <svg viewBox="0 0 24 24">
+            <path d="m5 13 4 4L19 7" />
+          </svg>
+        </span>
+        <span className="tb-check-label">{label}</span>
+      </label>
+      {error ? <span className="tb-field-error" role="alert">{error}</span>
+        : hint ? <span className="tb-field-hint">{hint}</span> : null}
+    </>
+  );
+}
+
+/** Alias kept so all apps share one name for the checkbox control. */
+export const Checkbox = Check;

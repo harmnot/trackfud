@@ -28,6 +28,11 @@ func TestAIConfigMapsModalPair(t *testing.T) {
 	if c.BaseURL() != ai.DefaultModalBaseURL {
 		t.Fatalf("wrong endpoint: %q", c.BaseURL())
 	}
+	// The served Modal model id wins over the stale config value, so live
+	// calls carry a model the endpoint actually serves.
+	if c.SparkModel() != ai.ModelModal {
+		t.Fatalf("Modal spark model must be the served id, got %q", c.SparkModel())
+	}
 
 	svc := newAIService(ac)
 	if svc.cli == nil || svc.transcriber == nil || svc.cropper == nil {

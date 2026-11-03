@@ -23,8 +23,8 @@ Tagline: "You powered 2.4 km of Rina's run."
 | Actor            | App / surface                                                 | What they do                                                                                               |
 | ---------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | Customer         | Customer PWA (`/customer/`)                                   | Orders food, pays (wallet or Paddle sandbox card), watches live map, sends cheers, rates, sees impact card |
-| Courier (runner) | Courier PWA (`/courier/`)                                     | Runs on foot, takes S/M low-spill orders near track                                                        |
-| Courier (biker)  | Courier PWA (`/courier/`)                                     | Rides a **pedal bike only** (no e-bike/motor), takes S/M/L low+medium-spill orders                         |
+| Courier (runner) | Courier PWA (`/courier/`)                                     | Runs on foot, takes S/M orders near track                                                                  |
+| Courier (biker)  | Courier PWA (`/courier/`)                                     | Rides a **pedal bike only** (no e-bike/motor), takes S/M/L orders                                           |
 | Merchant staff   | Courier PWA in **staff mode**                                 | Fallback delivery when no runner/biker accepts; invited by merchant, no fitness test                       |
 | Merchant         | Merchant PWA (`/merchant/`)                                   | Sets location pin, builds menu (Snap-a-Menu), accepts orders, confirms pickup, manages staff               |
 | Admin            | Admin CMS (`/admin/`, out of scope of the 4 milestone tracks) | Approves merchants/couriers, freezes/bans, refunds, settings, demo controls                                |
@@ -77,7 +77,7 @@ at_pickup → picked_up → at_dropoff → delivered`; empty search →
 
 1. **Voice Copilot** — hands-free accept/status while running (Muse Voice
    Transcribe + Muse Spark tool calling, keyword biasing, 25 languages).
-2. **Snap-a-Menu** — photo → multilingual menu JSON + `size_class`/`spill_risk`/
+2. **Snap-a-Menu** — photo → multilingual menu JSON + `size_class`/
    `travels_well` labels that feed dispatch + SAM 3.1 dish crops.
 3. **Trust Brief** — test-run cheat check + ID/bike-photo check; admin decides.
 4. **Translated + moderated chat**, **weekly AI Coach report** (not medical

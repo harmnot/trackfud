@@ -13,6 +13,7 @@ package ledger
 
 import (
 	"errors"
+	"math"
 	"sort"
 
 	"Trackfud/internal/order"
@@ -34,10 +35,19 @@ type Posting struct {
 }
 
 // Account names. Wallet-style accounts carry the owner id after a colon.
+// PaddleClearing is a receivable, not a fund: webhook legs debit it before
+// any settlement batch runs, so it legitimately sits negative ("Paddle owes
+// us") and is exempt from the ledger_accounts non-negative floor
+// (migration 00013). Every other kind must never go below zero.
 const (
 	PlatformRevenue = "platform_revenue:global"
 	PaddleClearing  = "paddle_clearing:global"
 	PayoutClearing  = "payout_clearing:global"
+	// FxPosition bridges the two sides of an FX-converted charge: it receives
+	// the charged currency and pays out the credited one, so it holds a
+	// cross-currency position by design and shares paddle_clearing's
+	// exemption from the non-negative balance floor (migration 00014).
+	FxPosition = "fx_position:global"
 )
 
 // CustomerWallet names a customer's wallet account.
@@ -142,6 +152,68 @@ func CardRefundPostings(q order.Quote, orderID string) []Posting {
 		{Account: Escrow(orderID), AmountMinor: -q.TotalMinor, Currency: q.Currency},
 		{Account: PaddleClearing, AmountMinor: q.TotalMinor, Currency: q.Currency},
 	}
+}
+
+// FxTopupPostings credits an FX-converted top-up: Paddle charged chargeMinor
+// in chargeCur (e.g. USD), the customer receives creditMinor in creditCur
+// (e.g. IDR) in full. Each currency nets to zero through the fx_position
+// bridge, which carries the cross as the platform's FX position.
+func FxTopupPostings(chargeMinor int64, chargeCur string, creditMinor int64, creditCur, userID string) []Posting {
+	return []Posting{
+		{Account: PaddleClearing, AmountMinor: -chargeMinor, Currency: chargeCur},
+		{Account: FxPosition, AmountMinor: chargeMinor, Currency: chargeCur},
+		{Account: FxPosition, AmountMinor: -creditMinor, Currency: creditCur},
+		{Account: CustomerWallet(userID), AmountMinor: creditMinor, Currency: creditCur},
+	}
+}
+
+// FxCardChargePostings holds an FX-converted card payment in the order's
+// escrow (credited currency), balanced against the charged currency through
+// fx_position. Settlement afterwards is identical (same-currency escrow out).
+func FxCardChargePostings(chargeMinor int64, chargeCur string, q order.Quote, orderID string) []Posting {
+	return []Posting{
+		{Account: PaddleClearing, AmountMinor: -chargeMinor, Currency: chargeCur},
+		{Account: FxPosition, AmountMinor: chargeMinor, Currency: chargeCur},
+		{Account: FxPosition, AmountMinor: -q.TotalMinor, Currency: q.Currency},
+		{Account: Escrow(orderID), AmountMinor: q.TotalMinor, Currency: q.Currency},
+	}
+}
+
+// zeroDecimal lists the currencies this platform counts in whole major units
+// (no sen/cents): IDR prices are stored as whole rupiah (seed: a Rp25.000 set
+// is 25000 minor), plus the standard zero-decimal set. ConvertMinor moves
+// between minor-unit scales through major units using this map.
+var zeroDecimal = map[string]bool{
+	"IDR": true, "JPY": true, "KRW": true, "CLP": true, "VND": true,
+}
+
+// minorExp returns the minor-unit exponent for a currency (0 for zero-decimal
+// ones like JPY, 2 for everything else we handle).
+func minorExp(cur string) int {
+	if zeroDecimal[cur] {
+		return 0
+	}
+	return 2
+}
+
+func pow10(n int) int64 {
+	p := int64(1)
+	for i := 0; i < n; i++ {
+		p *= 10
+	}
+	return p
+}
+
+// ConvertMinor converts amountMinor from one currency to another at a
+// major-unit rate (units of `to` per one unit of `from`, as stored in
+// fx_rates), rounding half up to the target minor unit. Pure display/pricing
+// math — money itself stays integer minor units in the ledger.
+func ConvertMinor(amountMinor int64, from, to string, rate float64) int64 {
+	if rate <= 0 {
+		return 0
+	}
+	major := float64(amountMinor) / float64(pow10(minorExp(from)))
+	return int64(math.Round(major * rate * float64(pow10(minorExp(to)))))
 }
 
 // WithdrawalDebitPostings moves courier earnings into payout clearing while

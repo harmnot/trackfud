@@ -18,6 +18,7 @@ paths:
                     {
                         "201": { description: created },
                         "400": { $ref: "#/components/responses/Problem" },
+                        "403": { $ref: "#/components/responses/Problem" },
                     },
             }
     /v1/auth/login:
@@ -28,6 +29,7 @@ paths:
                     {
                         "200": { description: ok },
                         "401": { $ref: "#/components/responses/Problem" },
+                        "403": { $ref: "#/components/responses/Problem" },
                     },
             }
     /v1/auth/refresh:
@@ -38,6 +40,7 @@ paths:
                     {
                         "200": { description: ok },
                         "401": { $ref: "#/components/responses/Problem" },
+                        "403": { $ref: "#/components/responses/Problem" },
                     },
             }
     /v1/auth/logout:
@@ -49,6 +52,7 @@ paths:
                 responses:
                     {
                         "200": { description: ok },
+                        "403": { $ref: "#/components/responses/Problem" },
                         "404": { $ref: "#/components/responses/Problem" },
                     },
             }
@@ -88,6 +92,22 @@ paths:
                     ],
                 responses: { "200": { description: ok } },
             }
+    /v1/files/{id}/complete:
+        post:
+            {
+                operationId: completeUpload,
+                security: [{ bearer: [] }],
+                parameters:
+                    [
+                        {
+                            name: id,
+                            in: path,
+                            required: true,
+                            schema: { type: string },
+                        },
+                    ],
+                responses: { "200": { description: ok } },
+            }
     /v1/files/{id}/content:
         get:
             {
@@ -101,7 +121,14 @@ paths:
                             schema: { type: string },
                         },
                     ],
-                responses: { "200": { description: ok } },
+                responses:
+                    {
+                        "200": { description: ok },
+                        "302":
+                            {
+                                description: R2 redirect (presigned GET for private files, public base for public files),
+                            },
+                    },
             }
     /v1/push/vapid-public-key:
         get:
@@ -141,7 +168,19 @@ paths:
                     [
                         { name: lat, in: query, schema: { type: number } },
                         { name: lng, in: query, schema: { type: number } },
+                        {
+                            name: category,
+                            in: query,
+                            schema: { type: string },
+                            description: "Menu category name (any locale); only restaurants serving it are returned.",
+                        },
                     ],
+                responses: { "200": { description: "ok; each restaurant carries availability (runners_bikers_nearby when couriers are online near it right now, else staff_only) plus live_couriers_count, live_modes, live_nearest_m, and the honest rating_avg/rating_count aggregate over collected restaurant_stars (rating_avg null when unrated)" } },
+            }
+    /v1/customer/categories:
+        get:
+            {
+                operationId: listCustomerCategories,
                 responses: { "200": { description: ok } },
             }
     /v1/customer/restaurants/{id}:
@@ -159,7 +198,7 @@ paths:
                         { name: lat, in: query, schema: { type: number } },
                         { name: lng, in: query, schema: { type: number } },
                     ],
-                responses: { "200": { description: ok } },
+                responses: { "200": { description: "ok; availability is live per restaurant (runners_bikers_nearby vs staff_only) with live_couriers_count, live_modes, live_nearest_m, plus rating_avg/rating_count over collected restaurant_stars (rating_avg null when unrated)" } },
             }
     /v1/customer/restaurants/{id}/menu:
         get:
@@ -172,6 +211,12 @@ paths:
                             in: path,
                             required: true,
                             schema: { type: string },
+                        },
+                        {
+                            name: category_id,
+                            in: query,
+                            schema: { type: string, format: uuid },
+                            description: "Narrows items to one menu category of this restaurant.",
                         },
                     ],
                 responses: { "200": { description: ok } },
@@ -691,6 +736,7 @@ paths:
                             },
                     }
                 "401": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
     /v1/courier/deliveries/{id}:
         get:
             operationId: getDelivery
@@ -1015,6 +1061,7 @@ paths:
     /v1/customer/orders/{id}/delivery-choice:
         post:
             operationId: deliveryChoice
+            description: "No-courier choices for the caller's own order. Open only while dispatch has given up (delivery `no_courier`, no courier claimed) on an order the kitchen accepted and nobody collected yet (order `accepted` or `ready`); anything else is 409. Every write re-checks that guard, so a food-ready wave or a courier claim that wins the race also answers 409. `wait_more` starts a fresh courier-first wave on the CMS search window; `pickup` closes the delivery for good (`delivery.customer_pickup` = true, never re-enters dispatch) and the customer collects with their order code; `cancel` cancels from `accepted` or `ready` and refunds the full total through the ledger in the same transaction."
             security: [{ bearer: [] }]
             parameters:
                 [
@@ -1040,7 +1087,20 @@ paths:
                         },
                 }
             responses:
-                "200": { description: ok }
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/DeliveryChoiceResult",
+                                            },
+                                    },
+                            },
+                    }
                 "400": { $ref: "#/components/responses/Problem" }
                 "403": { $ref: "#/components/responses/Problem" }
                 "404": { $ref: "#/components/responses/Problem" }
@@ -1203,11 +1263,39 @@ paths:
                         name: status,
                         in: query,
                         required: false,
-                        schema: { type: string },
+                        schema: { type: string, enum: [pending, approved, rejected, frozen, banned] },
+                    },
+                    {
+                        name: limit,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, maximum: 100 },
+                        description: "Legacy alias for per_page; ignored when per_page is sent",
+                    },
+                    {
+                        name: page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, default: 1 },
+                        description: "Scroll page, 1-indexed; newest rows first",
+                    },
+                    {
+                        name: per_page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, maximum: 100, default: 10 },
+                    },
+                    {
+                        name: q,
+                        in: query,
+                        required: false,
+                        schema: { type: string, maxLength: 64 },
+                        description: "Free-text filter: courier email",
                     },
                 ]
             responses:
                 "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
                 "403": { $ref: "#/components/responses/Problem" }
     /v1/admin/courier-applications/{user_id}:
         get:
@@ -1237,13 +1325,34 @@ paths:
                         name: status,
                         in: query,
                         required: false,
-                        schema: { type: string, enum: [pending, approved, rejected] },
+                        schema: { type: string, enum: [pending, approved, rejected, frozen, banned] },
                     },
                     {
                         name: limit,
                         in: query,
                         required: false,
-                        schema: { type: integer, minimum: 1, maximum: 100, default: 50 },
+                        schema: { type: integer, minimum: 1, maximum: 100 },
+                        description: "Legacy alias for per_page; ignored when per_page is sent",
+                    },
+                    {
+                        name: page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, default: 1 },
+                        description: "Scroll page, 1-indexed; newest rows first",
+                    },
+                    {
+                        name: per_page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, maximum: 100, default: 10 },
+                    },
+                    {
+                        name: q,
+                        in: query,
+                        required: false,
+                        schema: { type: string, maxLength: 64 },
+                        description: "Free-text filter: merchant name, owner email",
                     },
                 ]
             responses:
@@ -1323,6 +1432,55 @@ paths:
                                     schema:
                                         {
                                             $ref: "#/components/schemas/DecisionInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/admin/merchants/{id}/sanctions:
+        get:
+            operationId: listMerchantSanctions
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200": { description: ok }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+        post:
+            operationId: sanctionMerchant
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/MerchantSanctionInput",
                                         },
                                 },
                         },
@@ -1446,6 +1604,336 @@ paths:
                 "403": { $ref: "#/components/responses/Problem" }
                 "404": { $ref: "#/components/responses/Problem" }
                 "409": { $ref: "#/components/responses/Problem" }
+    /v1/admin/orders:
+        get:
+            operationId: listAdminOrders
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: status,
+                        in: query,
+                        required: false,
+                        schema:
+                            {
+                                type: string,
+                                enum: [awaiting_payment, placed, accepted, ready, picked_up, delivered, completed, rejected, cancelled],
+                            },
+                    },
+                    {
+                        name: limit,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, maximum: 100 },
+                        description: "Legacy alias for per_page; ignored when per_page is sent",
+                    },
+                    {
+                        name: page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, default: 1 },
+                        description: "Scroll page, 1-indexed; newest rows first",
+                    },
+                    {
+                        name: per_page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, maximum: 100, default: 10 },
+                    },
+                    {
+                        name: q,
+                        in: query,
+                        required: false,
+                        schema: { type: string, maxLength: 64 },
+                        description: "Free-text filter: order code, customer email, merchant name",
+                    },
+                ]
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+    /v1/admin/orders/{id}:
+        get:
+            operationId: getAdminOrder
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/admin/orders/{id}/refund:
+        post:
+            operationId: refundAdminOrder
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/RefundInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/admin/settings:
+        get:
+            operationId: getAdminSettings
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: scope,
+                        in: query,
+                        required: false,
+                        schema: { type: string },
+                        description: "global or a 2-letter country code (default global)",
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/SettingList",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+        put:
+            operationId: putAdminSetting
+            security: [{ bearer: [] }]
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/SettingInput",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+    /v1/admin/audit:
+        get:
+            operationId: listAdminAudit
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    { name: action, in: query, required: false, schema: { type: string } },
+                    { name: target_type, in: query, required: false, schema: { type: string } },
+                    { name: actor, in: query, required: false, schema: { type: string } },
+                    {
+                        name: limit,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, maximum: 100, default: 50 },
+                    },
+                    {
+                        name: offset,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 0, default: 0 },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/AuditList",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+    /v1/admin/ai/calls:
+        get:
+            operationId: listAdminAICalls
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    { name: feature, in: query, required: false, schema: { type: string } },
+                    {
+                        name: limit,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, maximum: 100, default: 50 },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/AICallList",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+    /v1/admin/ai/summary:
+        get:
+            operationId: adminAISummary
+            security: [{ bearer: [] }]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/AISummary",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+    /v1/admin/copilot/ask:
+        post:
+            operationId: copilotAsk
+            security: [{ bearer: [] }]
+            description: "Ops Copilot (PLAN 10.F): plain-words questions answered from fixed read-only analytics tools (never raw SQL) plus an optional model pass."
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/CopilotAsk",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/CopilotResponse",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+    /v1/admin/dashboard:
+        get:
+            operationId: adminDashboard
+            security: [{ bearer: [] }]
+            description: "Ops overview (PLAN 4.4 P0): today's numbers, live courier dots and active orders for the CMS live map."
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/Dashboard",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+    /v1/admin/couriers/{user_id}/performance:
+        get:
+            operationId: courierPerformance
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: user_id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            description: "Courier performance (PLAN 8.6): 30-day acceptance/completion/in-window rates, timing, rating, work, WHO trend, overexertion, earnings, flags, peers and history. rating.complaints counts this courier's 30-day ratings with 1-2 courier stars or an AI topic that blames the courier (late, rude, spilled); praise/other/kitchen topics and the abusive flag alone do not count. work.weekly is this courier's active seconds per week over the last 8 weeks, newest first."
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/CourierPerformance",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
     /v1/merchant/merchants/me:
         get:
             {
@@ -1473,12 +1961,65 @@ paths:
                 responses: { "200": { description: ok } },
             }
     /v1/merchant/merchants/me/agreement:
+        get:
+            operationId: getMyAgreement
+            security: [{ bearer: [] }]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/MerchantAgreementStatus",
+                                            },
+                                    },
+                            },
+                    }
+                "401": { $ref: "#/components/responses/Problem" }
         post:
             {
                 operationId: signAgreement,
                 security: [{ bearer: [] }],
-                responses: { "201": { description: created } },
+                responses:
+                    {
+                        "200": { description: ok },
+                        "201": { description: created },
+                    },
             }
+    /v1/merchant/earnings:
+        get:
+            operationId: getMerchantEarnings
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: weeks,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, maximum: 12, default: 8 },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/MerchantEarnings",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "401": { $ref: "#/components/responses/Problem" }
     /v1/merchant/staff:
         get:
             {
@@ -1511,14 +2052,51 @@ paths:
             }
     /v1/dev/outbox:
         get:
-            {
-                operationId: devOutbox,
-                responses: { "200": { description: ok } },
-            }
+            operationId: devOutbox
+            security: [{ bearer: [] }]
+            description: "Demo mode only (404 otherwise), admin role: the 50 newest queued emails (to, subject, body, created_at), newest first. Bodies carry verification/reset tokens, hence the same guard as /v1/dev/push-log."
+            responses:
+                "200": { description: ok }
+                "401": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
     /v1/customer/orders:
         get:
             operationId: listCustomerOrders
             security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: status,
+                        in: query,
+                        required: false,
+                        schema:
+                            {
+                                type: string,
+                                enum: [awaiting_payment, placed, accepted, ready, picked_up, delivered, completed, rejected, cancelled],
+                            },
+                    },
+                    {
+                        name: page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, default: 1 },
+                        description: "Scroll page, 1-indexed; newest rows first",
+                    },
+                    {
+                        name: per_page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, maximum: 100, default: 10 },
+                    },
+                    {
+                        name: q,
+                        in: query,
+                        required: false,
+                        schema: { type: string, maxLength: 64 },
+                        description: "Free-text filter: order code",
+                    },
+                ]
             responses:
                 "200":
                     {
@@ -1645,6 +2223,39 @@ paths:
         get:
             operationId: listMerchantOrders
             security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: status,
+                        in: query,
+                        required: false,
+                        schema:
+                            {
+                                type: string,
+                                enum: [awaiting_payment, placed, accepted, ready, picked_up, delivered, completed, rejected, cancelled],
+                            },
+                    },
+                    {
+                        name: page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, default: 1 },
+                        description: "Scroll page, 1-indexed; newest rows first",
+                    },
+                    {
+                        name: per_page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, maximum: 100, default: 10 },
+                    },
+                    {
+                        name: q,
+                        in: query,
+                        required: false,
+                        schema: { type: string, maxLength: 64 },
+                        description: "Free-text filter: order code",
+                    },
+                ]
             responses:
                 "200":
                     {
@@ -1661,6 +2272,36 @@ paths:
                             },
                     }
                 "401": { $ref: "#/components/responses/Problem" }
+    /v1/merchant/orders/{id}:
+        get:
+            operationId: getMerchantOrder
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/OrderDetail",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
     /v1/merchant/orders/{id}/accept:
         post:
             operationId: acceptOrder
@@ -1768,6 +2409,85 @@ paths:
                 "403": { $ref: "#/components/responses/Problem" }
                 "404": { $ref: "#/components/responses/Problem" }
                 "409": { $ref: "#/components/responses/Problem" }
+    /v1/merchant/orders/{id}/cancel:
+        post:
+            operationId: cancelMerchantOrder
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            requestBody:
+                {
+                    required: false,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/RejectOrder",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/OrderEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+    /v1/fx/currencies:
+        get:
+            operationId: listCurrencies
+            security: [{ bearer: [] }]
+            responses:
+                "200": { description: ok }
+                "401": { $ref: "#/components/responses/Problem" }
+    /v1/fx/rate:
+        get:
+            operationId: getFxRate
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    { name: from, in: query, required: true, schema: { type: string } },
+                    { name: to, in: query, required: true, schema: { type: string } },
+                ]
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+    /v1/fx/payout-info:
+        get:
+            operationId: payoutInfo
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    { name: currency, in: query, required: false, schema: { type: string } },
+                    { name: country, in: query, required: false, schema: { type: string } },
+                ]
+            responses:
+                "200": { description: ok }
+                "400": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
     /v1/merchant/menu/categories:
         get:
             operationId: listCategories
@@ -1970,6 +2690,22 @@ paths:
         get:
             operationId: listTopups
             security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, default: 1 },
+                        description: "Scroll page, 1-indexed; newest rows first",
+                    },
+                    {
+                        name: per_page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, maximum: 100, default: 10 },
+                    },
+                ]
             responses:
                 "200":
                     {
@@ -2034,7 +2770,7 @@ paths:
     /v1/webhooks/paddle:
         post:
             operationId: paddleWebhook
-            description: "Paddle sandbox webhook. Auth is the Paddle-Signature HMAC header, not JWT. Card data never touches our code."
+            description: "Paddle sandbox webhook. Auth is the Paddle-Signature HMAC header, not JWT. Handles transaction.completed/paid/updated (completed/paid pay once, terminal statuses fail) plus failed/canceled; unknown types are ignored. Card data never touches our code."
             responses:
                 "200": { description: ok }
                 "400": { $ref: "#/components/responses/Problem" }
@@ -2064,6 +2800,22 @@ paths:
         get:
             operationId: listWithdrawals
             security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, default: 1 },
+                        description: "Scroll page, 1-indexed; newest rows first",
+                    },
+                    {
+                        name: per_page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, maximum: 100, default: 10 },
+                    },
+                ]
             responses:
                 "200":
                     {
@@ -2129,6 +2881,36 @@ paths:
         get:
             operationId: listDeliveryHistory
             security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, default: 1 },
+                        description: "Scroll page, 1-indexed; newest rows first",
+                    },
+                    {
+                        name: per_page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, maximum: 100, default: 10 },
+                    },
+                    {
+                        name: status,
+                        in: query,
+                        required: false,
+                        schema: { type: string, enum: [all, delivered, cancelled], default: all },
+                        description: "Terminal-state filter; empty means all",
+                    },
+                    {
+                        name: q,
+                        in: query,
+                        required: false,
+                        schema: { type: string, maxLength: 64 },
+                        description: "Free-text filter matching the order code or merchant name",
+                    },
+                ]
             responses:
                 "200":
                     {
@@ -2145,6 +2927,7 @@ paths:
                             },
                     }
                 "401": { $ref: "#/components/responses/Problem" }
+                "400": { $ref: "#/components/responses/Problem" }
     /v1/admin/withdrawals:
         get:
             operationId: listAdminWithdrawals
@@ -2156,6 +2939,26 @@ paths:
                         in: query,
                         required: false,
                         schema: { type: string },
+                    },
+                    {
+                        name: page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, default: 1 },
+                        description: "Scroll page, 1-indexed; newest rows first",
+                    },
+                    {
+                        name: per_page,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, maximum: 100, default: 10 },
+                    },
+                    {
+                        name: limit,
+                        in: query,
+                        required: false,
+                        schema: { type: integer, minimum: 1, maximum: 100 },
+                        description: "Legacy alias for per_page; ignored when per_page is sent",
                     },
                 ]
             responses:
@@ -2237,6 +3040,87 @@ paths:
                 "200": { description: ok }
                 "403": { $ref: "#/components/responses/Problem" }
                 "409": { $ref: "#/components/responses/Problem" }
+    /v1/customer/payments/{id}/checkout:
+        post:
+            operationId: createPaymentCheckout
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            description: "Mint a Paddle transaction for one pending payment (top-up or card order). The PWA opens Paddle.Checkout with the returned transaction_id — never an ad-hoc amount (Paddle Billing rejects amount-only items with required price_id). When the payment currency is not Paddle-chargeable (e.g. IDR), the server converts to USD at the fx_rates rate, locks the quote on the payment (charge_currency/charge_amount_minor/fx_rate, surfaced as fx_quote), and the webhook credits the full original-currency amount — retrying reuses the locked quote. 422 only when no conversion rate exists. Needs TF_PADDLE_API_KEY; without it use demo simulate-paid."
+            responses:
+                "200":
+                    {
+                        description: existing transaction reused,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/PaymentCheckout",
+                                            },
+                                    },
+                            },
+                    }
+                "201":
+                    {
+                        description: transaction created,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/PaymentCheckout",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
+                "409": { $ref: "#/components/responses/Problem" }
+                "422": { $ref: "#/components/responses/Problem" }
+                "502": { $ref: "#/components/responses/Problem" }
+                "503": { $ref: "#/components/responses/Problem" }
+    /v1/customer/payments/{id}:
+        get:
+            operationId: getPayment
+            security: [{ bearer: [] }]
+            parameters:
+                [
+                    {
+                        name: id,
+                        in: path,
+                        required: true,
+                        schema: { type: string, format: uuid },
+                    },
+                ]
+            description: "One payment owned by the caller. The PWA polls this after the Paddle overlay closes — the webhook confirms asynchronously."
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/PaymentEnvelope",
+                                            },
+                                    },
+                            },
+                    }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
     /v1/dev/payments/{id}/simulate-paid:
         post:
             operationId: simulatePaddlePaid
@@ -2524,10 +3408,73 @@ paths:
                             },
                     }
                 "401": { $ref: "#/components/responses/Problem" }
+    /v1/courier/run-plans/hotspots:
+        get:
+            operationId: listHotspots
+            security: [{ bearer: [] }]
+            description: "AI Run Planner hotspots: approved merchants near a point ranked by 7-day order volume, then distance."
+            parameters:
+                [
+                    { name: lat, in: query, required: true, schema: { type: number } },
+                    { name: lng, in: query, required: true, schema: { type: number } },
+                    { name: radius_m, in: query, required: false, schema: { type: number, default: 3000 } },
+                    { name: limit, in: query, required: false, schema: { type: integer, default: 8 } },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/RunPlanHotspotList",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+    /v1/courier/run-plans:
+        post:
+            operationId: createRunPlans
+            security: [{ bearer: [] }]
+            description: "AI Run Planner: two workout-first loops past busy kitchens. The chosen planned_track drives dispatch."
+            requestBody:
+                {
+                    required: true,
+                    content:
+                        {
+                            application/json:
+                                {
+                                    schema:
+                                        {
+                                            $ref: "#/components/schemas/RunPlanRequest",
+                                        },
+                                },
+                        },
+                }
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            {
+                                                $ref: "#/components/schemas/RunPlanList",
+                                            },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
     /v1/courier/voice:
         get:
             operationId: voiceConnect
-            description: 'Voice Copilot relay (WebSocket upgrade with ?ticket= from POST /v1/ws/ticket). Binary frames: 24 kHz Int16 mono PCM. Text frames: {"type":"voice.transcript","text","lang"} and {"type":"voice.end"}. Replies: {"type":"voice.intent","intent","reply_text","offer_id","confirmation","live"}.'
+            description: 'Voice Copilot relay (WebSocket upgrade with ?ticket= from POST /v1/ws/ticket). Binary frames: 24 kHz Int16 mono PCM. Text frames: {"type":"voice.transcript","text","lang"} and {"type":"voice.end","lang"}; voice.end lang (optional) is the courier UI language en|id|ms used as the transcription language hint for that utterance (missing/unsupported → id). Replies: {"type":"voice.intent","intent","reply_text","offer_id","confirmation","live"}.'
             parameters:
                 [
                     {
@@ -2695,6 +3642,38 @@ paths:
                     }
                 "403": { $ref: "#/components/responses/Problem" }
                 "404": { $ref: "#/components/responses/Problem" }
+    /v1/dev/push-log:
+        get:
+            operationId: devPushLog
+            security: [{ bearer: [] }]
+            description: "Demo mode only (404 otherwise), admin role: web pushes queued as River push_send jobs after `since`, oldest first, at most 200 rows. Drives the demo video's phone notification banners; page forward by passing the last queued_at as the next since. Returns only the push text, recipient id, queue time and job state."
+            parameters:
+                [
+                    {
+                        name: since,
+                        in: query,
+                        required: false,
+                        schema: { type: string, format: date-time },
+                        description: "RFC3339 timestamp (exclusive lower bound on queued_at). Default: now minus 10 minutes. Encode a '+' offset as %2B (a form-decoded space is also accepted).",
+                    },
+                ]
+            responses:
+                "200":
+                    {
+                        description: ok,
+                        content:
+                            {
+                                application/json:
+                                    {
+                                        schema:
+                                            { $ref: "#/components/schemas/PushLog" },
+                                    },
+                            },
+                    }
+                "400": { $ref: "#/components/responses/Problem" }
+                "401": { $ref: "#/components/responses/Problem" }
+                "403": { $ref: "#/components/responses/Problem" }
+                "404": { $ref: "#/components/responses/Problem" }
 components:
     securitySchemes: { bearer: { type: http, scheme: bearer } }
     responses:
@@ -2815,7 +3794,6 @@ components:
                 total: { $ref: "#/components/schemas/Money" }
                 commission: { $ref: "#/components/schemas/Money" }
                 size_class: { type: string, enum: [S, M, L] }
-                spill_risk: { type: string, enum: [low, medium, high] }
                 payment_method: { type: string, enum: [wallet, card] }
                 payment_status:
                     { type: string, enum: [unpaid, held, paid, refunded] }
@@ -2837,7 +3815,7 @@ components:
                 delivery:
                     {
                         type: object,
-                        description: "Live delivery: status, eta_s, route, courier profile (order detail only)",
+                        description: "Live delivery: full view (status, eta_s, route, courier profile, customer_pickup) on order detail; merchant list rows carry the light {status, eta_s, courier_name, courier_mode} line (names null until a courier accepts). `customer_pickup` (boolean) is true once the customer chose to collect it themselves after no courier was found (status reads `cancelled`). Status `no_courier` on an `accepted`/`ready` order means the customer must choose (POST .../delivery-choice); notifyNoCourier broadcasts order.status with delivery_status=no_courier. Accept broadcasts order.status (with delivery_status) to customer + merchant + winner, delivery.assigned to the merchant owner, and offer.taken to every other offered courier — one order is one courier.",
                     }
         OrderEnvelope:
             {
@@ -2863,6 +3841,10 @@ components:
                                 type: array,
                                 items: { $ref: "#/components/schemas/Order" },
                             },
+                        page: { type: integer, minimum: 1 },
+                        per_page: { type: integer, minimum: 1, maximum: 100 },
+                        total: { type: integer, minimum: 0 },
+                        has_more: { type: boolean },
                     },
             }
         OrderDetail:
@@ -2898,7 +3880,6 @@ components:
                     { type: object, additionalProperties: { type: string } }
                 price_minor: { type: integer, minimum: 0 }
                 size_class: { type: string, enum: [S, M, L] }
-                spill_risk: { type: string, enum: [low, medium, high] }
                 travels_well: { type: boolean }
                 photo_url: { type: string }
                 available: { type: boolean }
@@ -2972,6 +3953,11 @@ components:
                 - type: object
                   properties:
                       status: { type: string }
+                      standing:
+                          {
+                              type: string,
+                              description: "Operational standing from the couriers row (approved/frozen/banned); empty when no courier record exists",
+                          }
                       id_number_saved: { type: boolean }
                       approved_at: { type: string, format: date-time }
         StartSession:
@@ -3110,12 +4096,36 @@ components:
                 note: { type: string }
         SanctionInput:
             type: object
-            required: [kind, reason_code]
+            required: [kind]
             properties:
                 kind: { type: string, enum: [freeze, unfreeze, ban] }
-                reason_code: { type: string }
+                reason_code:
+                    {
+                        type: string,
+                        description: "Required for freeze and ban; optional for unfreeze; audit-logged",
+                    }
                 note: { type: string }
                 ends_at: { type: string, format: date-time }
+        MerchantSanctionInput:
+            type: object
+            required: [kind]
+            properties:
+                kind: { type: string, enum: [ban, unban] }
+                reason:
+                    {
+                        type: string,
+                        description: "Required for ban; audit-logged",
+                    }
+                note: { type: string }
+        RefundInput:
+            type: object
+            required: [reason]
+            properties:
+                reason:
+                    {
+                        type: string,
+                        description: "Required; audit-logged in order_events and emailed to the customer",
+                    }
         DeliveryStatus:
             {
                 type: string,
@@ -3168,7 +4178,6 @@ components:
                             }
                         currency: { type: string }
                         size_class: { type: string, enum: [S, M, L] }
-                        spill_risk: { type: string, enum: [low, medium, high] }
                         ready_at_est: { type: string, format: date-time }
                         window_end: { type: string, format: date-time }
         OfferList:
@@ -3213,7 +4222,6 @@ components:
                         description: "Required beta disclaimer for WALK/BICYCLE routes",
                     }
                 size_class: { type: string, enum: [S, M, L] }
-                spill_risk: { type: string, enum: [low, medium, high] }
                 ready_at_est: { type: string, format: date-time }
                 window_end: { type: string, format: date-time }
                 nudged: { type: boolean }
@@ -3283,6 +4291,31 @@ components:
                         type: string,
                         enum: [wait_more, pickup, cancel],
                         description: "wait_more re-searches, pickup cancels delivery only, cancel refunds in full",
+                    }
+        DeliveryChoiceResult:
+            type: object
+            required: [choice]
+            properties:
+                choice: { type: string, enum: [wait_more, pickup, cancel] }
+                delivery_status:
+                    {
+                        $ref: "#/components/schemas/DeliveryStatus",
+                        description: "wait_more and pickup: the delivery after the choice",
+                    }
+                customer_pickup:
+                    {
+                        type: boolean,
+                        description: "pickup only: always true",
+                    }
+                order:
+                    {
+                        $ref: "#/components/schemas/Order",
+                        description: "cancel only: the cancelled order (customer view)",
+                    }
+                refunded:
+                    {
+                        type: boolean,
+                        description: "cancel only: always true (full refund posted)",
                     }
         RatingInput:
             type: object
@@ -3399,6 +4432,17 @@ components:
                         order: { $ref: "#/components/schemas/Order" },
                     },
             }
+        PaymentCheckout:
+            type: object
+            required: [transaction_id, paddle_env, payment]
+            properties:
+                transaction_id:
+                    {
+                        type: string,
+                        description: "Paddle transaction id — open with Paddle.Checkout.open({ transactionId })",
+                    }
+                paddle_env: { type: string, enum: [sandbox, production] }
+                payment: { $ref: "#/components/schemas/Payment" }
         TopupList:
             {
                 type: object,
@@ -3409,6 +4453,10 @@ components:
                                 type: array,
                                 items: { $ref: "#/components/schemas/Payment" },
                             },
+                        page: { type: integer, minimum: 1 },
+                        per_page: { type: integer, minimum: 1, maximum: 100 },
+                        total: { type: integer, minimum: 0 },
+                        has_more: { type: boolean },
                     },
             }
         WithdrawalInput:
@@ -3462,6 +4510,10 @@ components:
                                 items:
                                     { $ref: "#/components/schemas/Withdrawal" },
                             },
+                        page: { type: integer, minimum: 1 },
+                        per_page: { type: integer, minimum: 1, maximum: 100 },
+                        total: { type: integer, minimum: 0 },
+                        has_more: { type: boolean },
                     },
             }
         HoldInput:
@@ -3493,6 +4545,7 @@ components:
                         properties:
                             delivery_id: { type: string, format: uuid }
                             type: { type: string, enum: [workout, staff] }
+                            status: { type: string, enum: [delivered, cancelled] }
                             order_code: { type: string }
                             payout: { $ref: "#/components/schemas/Money" }
                             merchant_name: { type: string }
@@ -3500,7 +4553,15 @@ components:
                             active_s: { type: integer }
                             courier_stars:
                                 { type: integer, minimum: 1, maximum: 5 }
+                            courier_tags:
+                                { type: array, items: { type: string } }
                             delivered_at: { type: string, format: date-time }
+                            created_at: { type: string, format: date-time }
+                            cancel_note: { type: string }
+                page: { type: integer, minimum: 1 }
+                per_page: { type: integer, minimum: 1, maximum: 100 }
+                total: { type: integer, minimum: 0 }
+                has_more: { type: boolean }
         ImportJobInput:
             {
                 type: object,
@@ -3540,7 +4601,6 @@ components:
                     }
                 price_unreadable: { type: boolean }
                 size_class: { type: string, enum: [S, M, L] }
-                spill_risk: { type: string, enum: [low, medium, high] }
                 travels_well: { type: boolean }
                 category_hint: { type: string }
                 confident: { type: boolean }
@@ -3671,6 +4731,82 @@ components:
                             },
                     },
             }
+        RunPlanHotspot:
+            {
+                type: object,
+                properties:
+                    {
+                        merchant_id: { type: string, format: uuid },
+                        merchant_name: { type: string },
+                        lat: { type: number },
+                        lng: { type: number },
+                        distance_m: { type: number },
+                        orders_7d: { type: integer },
+                        currency: { type: string },
+                    },
+            }
+        RunPlanHotspotList:
+            {
+                type: object,
+                properties: { hotspots: { type: array, items: { $ref: "#/components/schemas/RunPlanHotspot" } } },
+            }
+        RunPlanRequest:
+            {
+                type: object,
+                required: [start],
+                properties:
+                    {
+                        start:
+                            {
+                                type: object,
+                                required: [lat, lng],
+                                properties: { lat: { type: number }, lng: { type: number } },
+                            },
+                        mode: { type: string, enum: [runner, biker], default: runner },
+                        goal_distance_m: { type: number, description: "500..42195 runner, 1000..100000 biker" },
+                        goal_duration_s: { type: integer, description: "300..14400, converted with the planning speed" },
+                        window: { type: string, enum: [now, lunch, dinner], default: now },
+                        lang: { type: string, enum: [en, id, ms], default: en },
+                    },
+            }
+        RunPlanWaypoint:
+            { type: object, properties: { lat: { type: number }, lng: { type: number } } }
+        RunPlan:
+            {
+                type: object,
+                properties:
+                    {
+                        id: { type: string },
+                        name: { type: string },
+                        mode: { type: string },
+                        distance_m: { type: number },
+                        duration_s: { type: integer },
+                        corridor_m: { type: number },
+                        waypoints: { type: array, items: { $ref: "#/components/schemas/RunPlanWaypoint" } },
+                        planned_track: { type: object, description: "GeoJSON LineString for POST /courier/sessions planned_track" },
+                        hotspot_merchant_ids: { type: array, items: { type: string, format: uuid } },
+                        est_orders: { type: integer },
+                        est_earnings: { type: object },
+                        reasoning: { type: string },
+                        source: { type: string, enum: [ai, heuristic] },
+                    },
+            }
+        RunPlanList:
+            {
+                type: object,
+                properties:
+                    {
+                        plans: { type: array, items: { $ref: "#/components/schemas/RunPlan" } },
+                        hotspots: { type: array, items: { $ref: "#/components/schemas/RunPlanHotspot" } },
+                        live: { type: boolean },
+                        goal_distance_m: { type: number },
+                        mode: { type: string },
+                        window: { type: string },
+                        corridor_m: { type: number },
+                        currency: { type: string },
+                        note: { type: string },
+                    },
+            }
         DemoState:
             {
                 type: object,
@@ -3703,5 +4839,284 @@ components:
                     {
                         pickup_code: { type: string },
                         delivery_pin: { type: string },
+                    },
+            }
+        PushLogEntry:
+            {
+                type: object,
+                required: [id, user_id, title, body, queued_at, state],
+                properties:
+                    {
+                        id:
+                            {
+                                type: integer,
+                                format: int64,
+                                description: "River job id (monotonic per queue insert)",
+                            },
+                        user_id: { type: string, format: uuid },
+                        title: { type: string },
+                        body: { type: string },
+                        queued_at:
+                            {
+                                type: string,
+                                format: date-time,
+                                description: "When the push job was queued (RFC3339 with fractional seconds)",
+                            },
+                        state:
+                            {
+                                type: string,
+                                enum: [available, cancelled, completed, discarded, pending, retryable, running, scheduled],
+                                description: "River job state (completed = handed to every subscription)",
+                            },
+                    },
+            }
+        PushLog:
+            {
+                type: object,
+                required: [pushes],
+                properties:
+                    {
+                        pushes:
+                            {
+                                type: array,
+                                maxItems: 200,
+                                items: { $ref: "#/components/schemas/PushLogEntry" },
+                            },
+                    },
+            }
+        MerchantAgreementStatus:
+            {
+                type: object,
+                properties:
+                    {
+                        agreement:
+                            {
+                                type: object,
+                                nullable: true,
+                                properties:
+                                    {
+                                        version: { type: string },
+                                        signer_name: { type: string },
+                                        agreed: { type: boolean },
+                                        signed_at: { type: string, format: date-time },
+                                        merchant_status: { type: string },
+                                        signed: { type: boolean },
+                                    },
+                            },
+                        merchant_status: { type: string },
+                    },
+            }
+        MerchantEarnings:
+            {
+                type: object,
+                properties:
+                    {
+                        totals:
+                            {
+                                type: array,
+                                items:
+                                    {
+                                        type: object,
+                                        properties:
+                                            {
+                                                currency: { type: string },
+                                                orders: { type: integer },
+                                                gross_minor: { type: integer },
+                                                commission_minor: { type: integer },
+                                                net_minor: { type: integer },
+                                                payable_minor: { type: integer },
+                                                lifetime_minor: { type: integer },
+                                            },
+                                    },
+                            },
+                        weeks:
+                            {
+                                type: array,
+                                items:
+                                    {
+                                        type: object,
+                                        properties:
+                                            {
+                                                week_start: { type: string, format: date },
+                                                currency: { type: string },
+                                                orders: { type: integer },
+                                                gross_minor: { type: integer },
+                                                commission_minor: { type: integer },
+                                                net_minor: { type: integer },
+                                            },
+                                    },
+                            },
+                        payouts_note: { type: string },
+                    },
+            }
+        SettingItem:
+            {
+                type: object,
+                properties:
+                    {
+                        key: { type: string },
+                        group: { type: string },
+                        label: { type: string },
+                        kind: { type: string, enum: [int, float] },
+                        min: { type: number },
+                        max: { type: number },
+                        hint: { type: string },
+                        override: { type: number, nullable: true },
+                        effective: { type: number },
+                        is_default: { type: number },
+                    },
+            }
+        SettingList:
+            {
+                type: object,
+                properties:
+                    {
+                        scope: { type: string },
+                        settings: { type: array, items: { $ref: "#/components/schemas/SettingItem" } },
+                    },
+            }
+        SettingInput:
+            type: object
+            required: [scope, key]
+            properties:
+                scope: { type: string, description: "global or a 2-letter country code" }
+                key: { type: string, description: "Allowlisted settings key, e.g. dispatch.runner_corridor_m" }
+                value: { type: number, nullable: true, description: "Null clears the override back to config.yaml" }
+        AuditEntry:
+            {
+                type: object,
+                properties:
+                    {
+                        actor_id: { type: string },
+                        action: { type: string },
+                        target_type: { type: string },
+                        target_id: { type: string },
+                        reason: { type: string },
+                        before: { type: object },
+                        after: { type: object },
+                        created_at: { type: string, format: date-time },
+                    },
+            }
+        AuditList:
+            {
+                type: object,
+                properties:
+                    {
+                        entries: { type: array, items: { $ref: "#/components/schemas/AuditEntry" } },
+                        total: { type: integer },
+                        limit: { type: integer },
+                        offset: { type: integer },
+                    },
+            }
+        AICall:
+            {
+                type: object,
+                properties:
+                    {
+                        feature: { type: string },
+                        model: { type: string },
+                        prompt_version: { type: string },
+                        latency_ms: { type: integer },
+                        input_tokens: { type: integer },
+                        output_tokens: { type: integer },
+                        cost_micros: { type: integer },
+                        fallback: { type: boolean },
+                        error: { type: string },
+                        created_at: { type: string, format: date-time },
+                    },
+            }
+        AICallList:
+            {
+                type: object,
+                properties:
+                    {
+                        calls: { type: array, items: { $ref: "#/components/schemas/AICall" } },
+                    },
+            }
+        AISummaryRow:
+            {
+                type: object,
+                properties:
+                    {
+                        feature: { type: string },
+                        model: { type: string },
+                        calls: { type: integer },
+                        avg_latency_ms: { type: integer },
+                        input_tokens: { type: integer },
+                        output_tokens: { type: integer },
+                        cost_micros: { type: integer },
+                        fallbacks: { type: integer },
+                        errors: { type: integer },
+                        last_at: { type: string, format: date-time, nullable: true },
+                    },
+            }
+        AISummary:
+            {
+                type: object,
+                properties:
+                    {
+                        summary: { type: array, items: { $ref: "#/components/schemas/AISummaryRow" } },
+                    },
+            }
+        CopilotAsk:
+            {
+                type: object,
+                required: [question],
+                properties:
+                    {
+                        question: { type: string, minLength: 2, maxLength: 500 },
+                    },
+            }
+        CopilotTable:
+            {
+                type: object,
+                properties:
+                    {
+                        title: { type: string },
+                        columns: { type: array, items: { type: string } },
+                        rows: { type: array, items: { type: array, items: { type: string } } },
+                    },
+            }
+        CopilotResponse:
+            {
+                type: object,
+                properties:
+                    {
+                        answer: { type: string },
+                        tables: { type: array, items: { $ref: "#/components/schemas/CopilotTable" } },
+                        tools_used: { type: array, items: { type: string } },
+                        live: { type: boolean },
+                    },
+            }
+        Dashboard:
+            {
+                type: object,
+                description: "Ops overview (PLAN 4.4 P0): today's numbers, live courier dots and active orders.",
+                properties:
+                    {
+                        today: { type: object },
+                        live_couriers: { type: array, items: { type: object } },
+                        active_orders: { type: array, items: { type: object } },
+                    },
+            }
+        CourierPerformance:
+            {
+                type: object,
+                description: "Courier performance (PLAN 8.6): 30-day rates, timing, rating, work, WHO trend, overexertion, earnings, flags, peers and history.",
+                properties:
+                    {
+                        courier: { type: object },
+                        window_days: { type: integer },
+                        acceptance: { type: object },
+                        completion: { type: object },
+                        in_window: { type: object },
+                        rating: { type: object },
+                        work: { type: object },
+                        overexertion: { type: object },
+                        earnings: { type: object },
+                        flags: { type: object },
+                        peers: { type: object },
+                        sessions: { type: array, items: { type: object } },
+                        deliveries: { type: array, items: { type: object } },
                     },
             }

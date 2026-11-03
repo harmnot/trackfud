@@ -16,6 +16,9 @@ COURIER_ENV="frontend-runner-biker/.env"
 MERCHANT_ENV="frontend-merchant/.env"
 
 # --- helpers ---------------------------------------------------------------
+# Shared with scripts/build.sh (single copy lives in scripts/lib.sh).
+# shellcheck disable=SC1091
+source scripts/lib.sh
 
 load_env_file() {
   local file="$1"
@@ -28,33 +31,6 @@ load_env_file() {
   else
     echo "WARN: $file not found — using defaults/env" >&2
   fi
-}
-
-# Build --build-arg flags from VITE_* lines in a dotenv file.
-# Prints one --build-arg per line to stdout; caller collects into array.
-build_args_from_env() {
-  local file="$1"
-  if [[ ! -f "$file" ]]; then
-    return 0
-  fi
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    # trim leading/trailing whitespace
-    line="${line#"${line%%[![:space:]]*}"}"
-    line="${line%"${line##*[![:space:]]}"}"
-    [[ -z "$line" || "$line" == \#* ]] && continue
-    if [[ "$line" =~ ^VITE_[A-Za-z0-9_]*= ]]; then
-      local key="${line%%=*}"
-      local value="${line#*=}"
-      # strip surrounding single or double quotes
-      if [[ "$value" =~ ^\".*\"$ ]]; then
-        value="${value:1:-1}"
-      elif [[ "$value" =~ ^\'.*\'$ ]]; then
-        value="${value:1:-1}"
-      fi
-      printf '%s\n' "--build-arg"
-      printf '%s\n' "${key}=${value}"
-    fi
-  done < "$file"
 }
 
 # Replace localhost/127.0.0.1/db host in a postgres URL with the container host.
@@ -92,7 +68,13 @@ load_env_file "$BACKEND_ENV"
 : "${BACKEND_PORT:=8081}"
 : "${GATEWAY_PORT:=8000}"
 : "${TF_JWT_SECRET:=dev-only-change-me-32chars-minimum!!}"
-: "${TF_DEMO_MODE:=false}"
+# Canonical env switch: APP_DEVELOPMENT=production → production mode (no demo
+# shortcuts). TF_DEMO_MODE only defaults when not explicitly set, so an
+# explicit TF_DEMO_MODE still wins (compat with existing .env files).
+: "${APP_DEVELOPMENT:=}"
+if [[ -z "${TF_DEMO_MODE:-}" ]]; then
+  if [[ "$APP_DEVELOPMENT" == "production" ]]; then TF_DEMO_MODE=false; else TF_DEMO_MODE=true; fi
+fi
 : "${TF_SMTP_HOST:=localhost}"
 : "${TF_SMTP_PORT:=1025}"
 : "${DATABASE_URL:=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${DB_PORT}/${POSTGRES_DB}?sslmode=disable}"
@@ -160,7 +142,7 @@ fi
 # --- run -----------------------------------------------------------------
 
 echo "==> Starting Postgres (PostGIS 18-3.6) + Mailpit"
-podman rm -f tf-db tf-mailpit tf-backend tf-customer tf-courier tf-merchant tf-gateway 2>/dev/null || true
+podman rm -f tf-db tf-mailpit tf-back-office tf-backend tf-customer tf-courier tf-merchant tf-gateway 2>/dev/null || true
 podman run -d --name tf-db --network tf-net \
   -e POSTGRES_USER="$POSTGRES_USER" \
   -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
@@ -187,6 +169,7 @@ BACKEND_ENV_FLAGS=(
   -e "TF_SMTP_HOST=${CONTAINER_SMTP_HOST}"
   -e "TF_SMTP_PORT=${TF_SMTP_PORT}"
   -e "TF_DEMO_MODE=${TF_DEMO_MODE}"
+  -e "APP_DEVELOPMENT=${APP_DEVELOPMENT}"
   -e "TF_UPLOAD_DIR=/data/uploads"
   -e "TF_CONFIG=/app/config.yaml"
   -e "TF_MIGRATIONS_DIR=/app/db/migrations"
@@ -194,7 +177,13 @@ BACKEND_ENV_FLAGS=(
 # Optional keys — forward only if present (empty means offline fallback by design)
 for key in TF_GOOGLE_MAPS_KEY TF_PADDLE_WEBHOOK_SECRET TF_MODAL_KEY TF_MODAL_SECRET \
            TF_META_API_KEY TF_META_BASE_URL TF_META_SPARK_MODEL TF_META_CONTRIBUTOR_MODEL \
-           TF_META_TRANSCRIBE_MODEL TF_META_SAM_MODEL TF_PAYMENTS_PROVIDER TF_ADDR; do
+           TF_META_TRANSCRIBE_MODEL TF_META_SAM_MODEL TF_PAYMENTS_PROVIDER TF_ADDR \
+           TF_PUBLIC_BASE_URL TF_IDENC_KEY \
+           TF_R2_ENDPOINT TF_R2_ACCESS_KEY TF_R2_SECRET_KEY \
+           TF_R2_PUBLIC_BUCKET TF_R2_PRIVATE_BUCKET TF_R2_PUBLIC_URL \
+           TF_SMTP_USER TF_SMTP_PASSWORD TF_SMTP_FROM \
+           TF_VAPID_PUBLIC_KEY TF_VAPID_PRIVATE_KEY TF_VAPID_SUBJECT \
+           TF_PADDLE_API_KEY TF_PADDLE_ENV TF_PADDLE_CLIENT_TOKEN; do
   val="${!key:-}"
   if [[ -n "$val" ]]; then
     BACKEND_ENV_FLAGS+=(-e "${key}=${val}")

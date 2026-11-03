@@ -12,8 +12,7 @@ import (
 // price or a model-made ban.
 
 var (
-	validSizes  = map[string]bool{"S": true, "M": true, "L": true}
-	validSpills = map[string]bool{"low": true, "medium": true, "high": true}
+	validSizes = map[string]bool{"S": true, "M": true, "L": true}
 )
 
 // ---------- Snap-a-Menu ----------
@@ -27,7 +26,6 @@ type MenuDraft struct {
 	PriceMinor      *int64            `json:"price_minor"`
 	PriceUnreadable bool              `json:"price_unreadable"`
 	SizeClass       string            `json:"size_class"`
-	SpillRisk       string            `json:"spill_risk"`
 	TravelsWell     bool              `json:"travels_well"`
 	CategoryHint    string            `json:"category_hint"`
 	Confident       bool              `json:"confident"`
@@ -52,13 +50,12 @@ func MenuSchema() map[string]any {
 						"name":             map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
 						"description":      map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
 						"size_class":       map[string]any{"type": "string", "enum": []string{"S", "M", "L"}},
-						"spill_risk":       map[string]any{"type": "string", "enum": []string{"low", "medium", "high"}},
 						"travels_well":     map[string]any{"type": "boolean"},
 						"category_hint":    map[string]any{"type": "string"},
 						"confident":        map[string]any{"type": "boolean"},
 						"price_unreadable": map[string]any{"type": "boolean"},
 					},
-					"required":             []string{"name", "size_class", "spill_risk", "travels_well"},
+					"required":             []string{"name", "size_class", "travels_well"},
 					"additionalProperties": false,
 				},
 			},
@@ -90,9 +87,6 @@ func ParseMenuOutput(raw string) (MenuOutput, error) {
 		d := it.MenuDraft
 		if !validSizes[d.SizeClass] {
 			return MenuOutput{}, fmt.Errorf("item %d: bad size_class %q", i, d.SizeClass)
-		}
-		if !validSpills[d.SpillRisk] {
-			return MenuOutput{}, fmt.Errorf("item %d: bad spill_risk %q", i, d.SpillRisk)
 		}
 		if len(d.Name) == 0 {
 			return MenuOutput{}, fmt.Errorf("item %d: name missing", i)

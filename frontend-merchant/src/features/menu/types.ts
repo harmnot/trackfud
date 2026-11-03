@@ -2,7 +2,6 @@
 
 export type LocaleMap = Record<string, string>;
 export type SizeClass = 'S' | 'M' | 'L';
-export type SpillRisk = 'low' | 'medium' | 'high';
 
 /** Locales the merchant UI edits; matches `src/locales/*.json`. */
 export const SUPPORTED_LANGS = ['en', 'id', 'ms'] as const;
@@ -18,7 +17,6 @@ export const BUSY_EXTRA_MIN = 15;
 export const MAX_PREP_MIN = 120;
 
 export const SIZE_OPTIONS: ReadonlyArray<SizeClass> = ['S', 'M', 'L'];
-export const SPILL_OPTIONS: ReadonlyArray<SpillRisk> = ['low', 'medium', 'high'];
 
 /** Common allergen tags (compact codes, rendered via i18n). */
 export const ALLERGENS = [
@@ -47,7 +45,6 @@ export interface MenuItem {
   description: LocaleMap;
   price_minor: number;
   size_class: SizeClass;
-  spill_risk: SpillRisk;
   travels_well: boolean;
   photo_url: string;
   available: boolean;
@@ -90,7 +87,6 @@ export interface ImportDraft {
   /** Null until the merchant types a price — AI output is never trusted. */
   price_minor: number | null;
   size_class: SizeClass;
-  spill_risk: SpillRisk;
   travels_well: boolean;
   photo_url: string;
   category_id: string | null;

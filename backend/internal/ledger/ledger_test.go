@@ -198,3 +198,53 @@ func TestB5KeysDeterministic(t *testing.T) {
 		t.Fatal("card keys must not collide with wallet keys")
 	}
 }
+
+// FxTopupPostings: USD charged, IDR credited in full, zero per currency.
+func TestFxTopupPostings(t *testing.T) {
+	legs := FxTopupPostings(62, "USD", 10000, "IDR", "u1")
+	if err := CheckBalanced(legs); err != nil {
+		t.Fatalf("FX top-up legs must balance per currency: %v", err)
+	}
+	if got := Currencies(legs); len(got) != 2 || got[0] != "IDR" || got[1] != "USD" {
+		t.Fatalf("FX top-up must touch exactly IDR+USD: %v", got)
+	}
+	var wallet, clearing int64
+	for _, l := range legs {
+		switch l.Account {
+		case CustomerWallet("u1"):
+			if l.Currency != "IDR" {
+				t.Fatalf("wallet leg must be IDR: %+v", l)
+			}
+			wallet = l.AmountMinor
+		case PaddleClearing:
+			if l.Currency != "USD" {
+				t.Fatalf("clearing leg must be USD: %+v", l)
+			}
+			clearing = l.AmountMinor
+		}
+	}
+	if wallet != 10000 {
+		t.Fatalf("customer must receive the full IDR amount, got %d", wallet)
+	}
+	if clearing != -62 {
+		t.Fatalf("clearing must be debited the USD charge, got %d", clearing)
+	}
+}
+
+// ConvertMinor: major-unit rate across minor-unit scales, half up.
+func TestConvertMinor(t *testing.T) {
+	// Seed row: 1 IDR = 6.1728e-05 USD → Rp10.000 ≈ $0.62 (61.7c → 62c).
+	if got := ConvertMinor(10000, "IDR", "USD", 6.1728e-05); got != 62 {
+		t.Fatalf("IDR->USD conversion = %d, want 62", got)
+	}
+	if got := ConvertMinor(100, "USD", "USD", 1); got != 100 {
+		t.Fatalf("identity conversion must pass through, got %d", got)
+	}
+	if got := ConvertMinor(10000, "IDR", "USD", 0); got != 0 {
+		t.Fatalf("non-positive rate must convert to 0, got %d", got)
+	}
+	// Zero-decimal target: $1.00 → ¥151 at 151 JPY/USD.
+	if got := ConvertMinor(100, "USD", "JPY", 151); got != 151 {
+		t.Fatalf("USD->JPY conversion = %d, want 151", got)
+	}
+}

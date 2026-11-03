@@ -10,6 +10,7 @@ export type CourierFitness = {
   flags: string[];
   max_gap_s: number;
   checkpoints: number;
+  checkpoint_file_ids?: string[];
 };
 
 export type CourierApplication = {
@@ -17,22 +18,39 @@ export type CourierApplication = {
   email: string;
   mode: string;
   status: string;
+  /** Operational standing from sanctions (frozen/banned); empty when none. */
+  standing?: string;
   reject_reason: string;
   fitness: CourierFitness;
   submitted_at: string | null;
   updated_at: string | null;
 };
 
+/**
+ * Trust-brief wire shape from GET /v1/admin/courier-applications/{user_id}/trust-brief.
+ * Either `{ pending: true }` (worker still running) or the advisory brief, where
+ * `reasons` is a free-form list and `risk`/`photo_note` are plain strings.
+ */
 export type TrustBrief = {
-  user_id: string;
-  recommendation?: string;
+  pending?: boolean;
+  user_id?: string;
+  risk?: string;
+  advisory?: boolean;
   summary?: string;
-  signals?: Array<{ label: string; value: string }>;
-  [key: string]: unknown;
+  reasons?: unknown;
+  photo_note?: string;
+  fallback?: boolean;
+  created_at?: string;
+  recommendation?: string;
+  signals?: Array<{ label: string; value: unknown }>;
 };
 
 /** Courier profile for admin review (GET /v1/admin/courier-applications/{user_id}). */
 export type CourierProfile = {
+  mode?: string;
+  status?: string;
+  /** Operational standing from the couriers row (frozen/banned); empty when none. */
+  standing?: string;
   legal_name?: string;
   phone?: string;
   nationality?: string;
@@ -46,6 +64,8 @@ export type CourierProfile = {
   address?: Record<string, unknown>;
   emergency_contact?: Record<string, unknown>;
   bike?: Record<string, unknown>;
+  consents?: Record<string, unknown>;
+  approved_at?: string | null;
 };
 
 /** Courier application detail: review fields plus the saved profile. */
@@ -54,8 +74,12 @@ export type CourierApplicationDetail = {
   email: string;
   mode: string;
   status: string;
+  /** Operational standing from sanctions (frozen/banned); empty when none. */
+  standing?: string;
   reject_reason: string;
-  fitness: Omit<CourierFitness, 'checkpoints'>;
+  submitted_at?: string | null;
+  updated_at?: string | null;
+  fitness: CourierFitness;
   profile: CourierProfile;
 };
 
@@ -69,6 +93,8 @@ export type MerchantDetail = MerchantRecord & {
     signer_name?: string;
     agreed?: boolean;
     signed_at?: string | null;
+    text?: string;
+    sha256?: string;
   };
   staff?: Array<{
     id: string;
@@ -79,6 +105,12 @@ export type MerchantDetail = MerchantRecord & {
     status: string;
   }>;
 };
+
+/**
+ * One opening-hours entry: a plain string ("09:00-22:00"), a structured
+ * `{ open, close }` object (backend `map[string]any` shape), or null when closed.
+ */
+export type OpeningHoursValue = string | { open?: unknown; close?: unknown } | null;
 
 /** Merchant review record. Served by GET /v1/admin/merchants when available. */
 export type MerchantRecord = {
@@ -91,14 +123,35 @@ export type MerchantRecord = {
   address?: string;
   pickup_note?: string;
   status: string;
+  /** Admin rejection reason (empty unless status is rejected). */
+  reject_reason?: string;
   prep_minutes?: number;
   lat?: number;
   lng?: number;
-  opening_hours?: Record<string, string>;
+  opening_hours?: Record<string, OpeningHoursValue>;
   agreement_signed_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
-export const STATUS_FILTERS = ['all', 'pending', 'approved', 'rejected'] as const;
+/**
+ * One sanction row. Courier rows use `reason_code` (+ optional `ends_at`);
+ * merchant rows use `reason` + `prev_status` (status restored on unban).
+ */
+export type Sanction = {
+  id: string;
+  kind: string;
+  reason_code?: string;
+  reason?: string;
+  note?: string;
+  prev_status?: string;
+  starts_at?: string;
+  ends_at?: string | null;
+  created_by?: string;
+  created_at?: string;
+};
+
+export const STATUS_FILTERS = ['all', 'pending', 'approved', 'rejected', 'frozen', 'banned'] as const;
 export type StatusFilter = (typeof STATUS_FILTERS)[number];
 
 export function isStatus(s: string): s is ReviewStatus {

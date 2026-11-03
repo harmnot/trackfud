@@ -7,11 +7,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
-import { Button, Note, Page } from '../components/ui';
-import { QUICK_REPLIES, useChat } from '../features/chat/chatStore';
+import { Button, Note, Page, TextInput } from '../components/ui';
+import { bindChatFrames, QUICK_REPLIES, useChat } from '../features/chat/chatStore';
 import { useDelivery } from '../features/delivery/deliveryStore';
 import { db } from '../lib/db';
 import { logger } from '../lib/logger';
+import { socket } from '../lib/ws';
 import i18n from '../i18n';
 
 export function ChatPage(): React.JSX.Element {
@@ -29,6 +30,8 @@ export function ChatPage(): React.JSX.Element {
   const lang = (['en', 'id', 'ms'].includes(i18n.language) ? i18n.language : 'en') as 'en' | 'id' | 'ms';
 
   useEffect(() => {
+    bindChatFrames();
+    void socket.connect();
     void useChat.getState().load({ deliveryId });
   }, [deliveryId]);
 
@@ -162,14 +165,15 @@ export function ChatPage(): React.JSX.Element {
           void send();
         }}
       >
-        <input
-          className="tb-input flex-1"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={t('chat.placeholder')}
-          maxLength={280}
-          aria-label={t('chat.placeholder')}
-        />
+        <div className="flex-1">
+          <TextInput
+            value={text}
+            onChange={setText}
+            placeholder={t('chat.placeholder')}
+            maxLength={280}
+            aria-label={t('chat.placeholder')}
+          />
+        </div>
         <Button type="submit" variant="sun">{t('chat.send')}</Button>
       </form>
       <div className="mt-2">

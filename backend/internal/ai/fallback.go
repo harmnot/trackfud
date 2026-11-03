@@ -16,23 +16,22 @@ import (
 // demoMenu is the canned Snap-a-Menu result for demo photos: it mirrors the
 // seeded Jakarta menu so import output looks native to judges.
 func demoMenu() []MenuDraft {
-	mk := func(en, id, ms, size, spill string, tw bool) MenuDraft {
+	mk := func(en, id, ms, size string, tw bool) MenuDraft {
 		return MenuDraft{
 			Name:            map[string]string{"en": en, "id": id, "ms": ms},
 			Description:     map[string]string{},
 			PriceMinor:      nil,
 			PriceUnreadable: true,
 			SizeClass:       size,
-			SpillRisk:       spill,
 			TravelsWell:     tw,
 			Confident:       false,
 		}
 	}
 	return []MenuDraft{
-		mk("Grilled Chicken Rice Box", "Nasi Ayam Panggang", "Nasi Ayam Bakar", "M", "low", true),
-		mk("Tofu Veggie Wrap", "Wrap Tahu Sayur", "Balut Tauhu Sayur", "S", "low", true),
-		mk("Fruit Salad Cup", "Salad Buah", "Salad Buah", "S", "medium", true),
-		mk("Iced Tea", "Es Teh Manis", "Teh Ais", "S", "high", false),
+		mk("Grilled Chicken Rice Box", "Nasi Ayam Panggang", "Nasi Ayam Bakar", "M", true),
+		mk("Tofu Veggie Wrap", "Wrap Tahu Sayur", "Balut Tauhu Sayur", "S", true),
+		mk("Fruit Salad Cup", "Salad Buah", "Salad Buah", "S", true),
+		mk("Iced Tea", "Es Teh Manis", "Teh Ais", "S", false),
 	}
 }
 

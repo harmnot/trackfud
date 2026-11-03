@@ -14,7 +14,6 @@ export type Offer = {
   feeMinor: number;
   currency: string;
   sizeClass: 'S' | 'M' | 'L';
-  spillRisk: 'low' | 'medium' | 'high';
   mode: CourierMode;
   /** When the 30 s window closes (device clock ms). */
   expiresAt: number;
@@ -63,7 +62,6 @@ export function parseOffer(msg: unknown): Offer | null {
     feeMinor,
     currency,
     sizeClass: (orderStr('size_class') ?? str('size_class')) === 'L' ? 'L' : (orderStr('size_class') ?? str('size_class')) === 'M' ? 'M' : 'S',
-    spillRisk: (orderStr('spill_risk') ?? str('spill_risk')) === 'medium' ? 'medium' : (orderStr('spill_risk') ?? str('spill_risk')) === 'high' ? 'high' : 'low',
     mode: str('mode') === 'biker' ? 'biker' : 'runner',
     expiresAt: expiryMs({ expiresAt: str('expires_at'), secondsLeft: num('seconds_left') }),
     demo: false,

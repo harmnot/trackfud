@@ -34,14 +34,15 @@ var (
 )
 
 // allowed maps each status to the statuses it may move to.
-// Cancel rules per AGENTS.md §5: the customer may cancel only before the
-// merchant accepts; after accept only support/admin cancels ( Casey P1);
+// Cancel rules: the customer may cancel only before the merchant accepts;
+// the merchant may cancel an accepted/ready order before pickup (refund +
+// delivery cancel in the same tx); after pickup only support/admin cancels;
 // merchant accept timeout is enforced by the merchant_accept_timeout job.
 var allowed = map[string][]string{
 	StatusAwaitingPayment: {StatusPlaced, StatusCancelled},
 	StatusPlaced:          {StatusAccepted, StatusRejected, StatusCancelled},
 	StatusAccepted:        {StatusReady, StatusCancelled},
-	StatusReady:           {StatusPickedUp},
+	StatusReady:           {StatusPickedUp, StatusCancelled},
 	StatusPickedUp:        {StatusDelivered},
 	StatusDelivered:       {StatusCompleted},
 	StatusCompleted:       {},
@@ -191,6 +192,14 @@ type QuoteInput struct {
 // QuoteFor computes every amount for an order. The courier receives the
 // remainder after the rounded platform fee, so the split sums exactly.
 func QuoteFor(in QuoteInput) Quote {
+	return QuoteForRates(in, CommissionBps, CommissionStaffBps, ServiceFeeBps)
+}
+
+// QuoteForRates prices with explicit basis-point rates so per-country admin
+// overrides (A9 settings editor) drive quoting without touching the
+// constants above. Invariants match QuoteFor: the courier gets the remainder
+// after the rounded platform fee, so the split sums exactly.
+func QuoteForRates(in QuoteInput, commissionBps, staffBps, serviceBps int) Quote {
 	sched := ScheduleFor(in.Currency)
 	if in.SubtotalMinor < 0 {
 		in.SubtotalMinor = 0
@@ -199,8 +208,18 @@ func QuoteFor(in QuoteInput) Quote {
 		in.TipMinor = 0
 	}
 	delivery := DeliveryFee(in.DistanceKm, sched)
-	service := ServiceFee(in.SubtotalMinor, sched)
-	commission := Commission(in.SubtotalMinor, in.StaffDelivery)
+	service := mulBps(in.SubtotalMinor, serviceBps)
+	if service < sched.ServiceMinMinor {
+		service = sched.ServiceMinMinor
+	}
+	if service > sched.ServiceMaxMinor {
+		service = sched.ServiceMaxMinor
+	}
+	rate := commissionBps
+	if in.StaffDelivery {
+		rate = staffBps
+	}
+	commission := mulBps(in.SubtotalMinor, rate)
 	courierFee := CourierFee(delivery)
 	total := in.SubtotalMinor + delivery + service + in.TipMinor
 	return Quote{

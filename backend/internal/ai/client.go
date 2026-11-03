@@ -12,6 +12,8 @@ package ai
 import (
 	"context"
 	"errors"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/openai/openai-go/v3"
@@ -30,11 +32,19 @@ const (
 // DefaultBaseURL is the Meta Model API endpoint (direct fallback).
 const DefaultBaseURL = "https://api.meta.ai/v1"
 
-// DefaultModalBaseURL is the Modal-hosted OpenAI-compatible endpoint that
-// serves chat/text calls. Modal enforces proxy auth at the edge via the
-// Modal-Key / Modal-Secret header pair, so plain Bearer auth alone gets a
-// 401 before any route runs.
-const DefaultModalBaseURL = "https://muhammad099x-work--ep-muse-spark-open-816b-a42b-server.us-west.modal.direct"
+// ModelModal is the exact model id served on the Modal endpoint (from the
+// Modal dashboard inference curl: "model":
+// "meta-models/Muse-Spark-Open-816B-A42B"). The endpoint serves ONLY this
+// id — legacy Spark ids 404 there.
+const ModelModal = "meta-models/Muse-Spark-Open-816B-A42B"
+
+// DefaultModalBaseURL is the Modal-hosted OpenAI-compatible base URL, FULL
+// base including /v1: the SDK appends /chat/completions, matching the Modal
+// endpoints-guide curl of .../v1/chat/completions. Proxy auth is one Bearer
+// token, "<token-id>.<token-secret>", per that guide — not a header pair and
+// not a plain API key, both of which get a non-JSON 401 at the edge that the
+// SDK cannot parse (surfacing as the cryptic apierror.Error unmarshal error).
+const DefaultModalBaseURL = "https://muhammad099x-work--ep-muse-spark-open-816b-a42b-server.us-west.modal.direct/v1"
 
 // Price table: micro-USD per 1M tokens (integers only, never floats).
 // Spark: $1.25 in / $4.25 out; contributor: $0.10 / $0.20 per 1M.
@@ -58,9 +68,10 @@ func (e *UpstreamError) Error() string { return "ai " + e.Op + ": " + e.Err.Erro
 func (e *UpstreamError) Unwrap() error { return e.Err }
 
 // Config wires the client. Empty APIKey with an empty Modal pair selects
-// fallback-only mode. The Modal proxy-token pair (Modal-Key / Modal-Secret)
-// is the credential for the Modal-hosted endpoint; APIKey stays as the
-// Meta-direct key and passes through as Bearer for inner services.
+// fallback-only mode. ModalKey/ModalSecret are the Modal proxy-token ID and
+// secret; the client sends them as one Bearer token "<id>.<secret>" (Modal
+// endpoints guide). APIKey stays the Meta-direct key for transcription and
+// vision, which the Modal endpoint does not serve.
 type Config struct {
 	APIKey           string
 	ModalKey         string
@@ -87,8 +98,19 @@ func (c Config) withDefaults() Config {
 			c.BaseURL = DefaultBaseURL
 		}
 	}
+	// The SDK appends /chat/completions to BaseURL, so the base must include
+	// /v1 (the Modal curl hits .../v1/chat/completions). Accept a bare root
+	// too — TF_META_BASE_URL may be set either way — and normalize it.
+	c.BaseURL = ensureV1Base(c.BaseURL)
 	if c.SparkModel == "" {
 		c.SparkModel = ModelSpark
+		if c.UsesModal() {
+			c.SparkModel = ModelModal
+		}
+	} else if c.UsesModal() && isLegacySparkID(c.SparkModel) {
+		// The Modal endpoint serves exactly one model id (ModelModal);
+		// legacy Spark ids 404 there, so map them instead of failing.
+		c.SparkModel = ModelModal
 	}
 	if c.ContributorModel == "" {
 		c.ContributorModel = ModelContributor
@@ -100,6 +122,23 @@ func (c Config) withDefaults() Config {
 		c.SAMModel = ModelSAM
 	}
 	return c
+}
+
+// ensureV1Base normalizes an OpenAI-compatible base URL: surrounding space
+// and trailing slashes go, and a missing /v1 suffix is appended (the SDK
+// appends /chat/completions to whatever base it gets).
+func ensureV1Base(base string) string {
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	if !strings.HasSuffix(base, "/v1") {
+		base += "/v1"
+	}
+	return base
+}
+
+// isLegacySparkID reports model ids the Modal endpoint does not serve: the
+// Meta-direct Spark family plus the earlier muse-spark-open default.
+func isLegacySparkID(m string) bool {
+	return m == ModelSpark || m == "muse-spark-open"
 }
 
 // CallRecord describes one model call for the ai_calls log.
@@ -132,25 +171,51 @@ type CallLogger func(ctx context.Context, rec CallRecord)
 type Client struct {
 	cfg Config
 	cli openai.Client
+	// backup carries hedged duplicates over its own connection pool, so a
+	// duplicate never queues behind the connection the first call is stuck on.
+	backup openai.Client
+}
+
+// newModelHTTPClient is the transport for model calls. HTTP/2 multiplexes
+// every request to a host over one connection; when the remote drops it
+// silently (Modal recycling a container), every call would hang until its
+// deadline. Health pings close such a connection within ~15 s instead.
+func newModelHTTPClient() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.HTTP2 = &http.HTTP2Config{SendPingTimeout: 10 * time.Second, PingTimeout: 5 * time.Second}
+	return &http.Client{Transport: t}
+}
+
+// clientFor picks the backup pool for a hedged duplicate (see Hedge).
+func (c *Client) clientFor(ctx context.Context) *openai.Client {
+	if IsHedge(ctx) {
+		return &c.backup
+	}
+	return &c.cli
 }
 
 // New builds a Client. With no credential the client still builds but every
-// live call returns ErrNoKey so workers fall back deterministically.
+// live call returns ErrNoKey so workers fall back deterministically. Via
+// Modal, auth is one Bearer token "<token-id>.<token-secret>" (Modal
+// endpoints guide); a half pair never goes live (see HasKey/UsesModal).
 func New(cfg Config) *Client {
 	cfg = cfg.withDefaults()
+	apiKey := cfg.APIKey
+	if cfg.UsesModal() {
+		apiKey = cfg.ModalKey + "." + cfg.ModalSecret
+	}
 	opts := []option.RequestOption{
 		option.WithBaseURL(cfg.BaseURL),
-		option.WithAPIKey(cfg.APIKey),
+		option.WithAPIKey(apiKey),
 	}
-	if cfg.UsesModal() {
-		// Modal proxy auth: header pair, not Bearer. Authorization is left
-		// free for the inner service behind the proxy.
-		opts = append(opts,
-			option.WithHeader("Modal-Key", cfg.ModalKey),
-			option.WithHeader("Modal-Secret", cfg.ModalSecret),
-		)
+	with := func(hc *http.Client) []option.RequestOption {
+		return append(append([]option.RequestOption{}, opts...), option.WithHTTPClient(hc))
 	}
-	return &Client{cfg: cfg, cli: openai.NewClient(opts...)}
+	return &Client{
+		cfg:    cfg,
+		cli:    openai.NewClient(with(newModelHTTPClient())...),
+		backup: openai.NewClient(with(newModelHTTPClient())...),
+	}
 }
 
 // HasKey reports whether live model calls are possible: Meta key or the
@@ -179,11 +244,32 @@ func (c *Client) BaseURL() string { return c.cfg.BaseURL }
 // to a browser; only server-side helpers may call this.
 func (c *Client) APIKey() string { return c.cfg.APIKey }
 
+// resolveModel maps legacy Spark ids to the served Modal model when routing
+// via Modal (callers may still pass the ModelSpark constant or a stale
+// config value). Meta-direct calls pass the model through untouched.
+func (c *Client) resolveModel(m string) string {
+	if c.cfg.UsesModal() && isLegacySparkID(m) {
+		return ModelModal
+	}
+	return m
+}
+
+// errText caps an upstream SDK error for the ai_calls row: the raw text can
+// carry response dumps, while the row only needs the signal.
+func errText(err error) string {
+	s := err.Error()
+	if len(s) > 500 {
+		s = s[:500] + "…"
+	}
+	return s
+}
+
 // ChatJSON runs one structured-output chat completion and returns the raw
 // JSON text. schemaDoc is a JSON-Schema document; name identifies the format.
 // The call is always logged via log (nil skips logging, tests only).
 func (c *Client) ChatJSON(ctx context.Context, feature, promptVersion, model, system, user string, name string, schemaDoc map[string]any, log CallLogger) (string, error) {
 	start := time.Now()
+	model = c.resolveModel(model)
 	rec := CallRecord{Feature: feature, Model: model, PromptVersion: promptVersion}
 	done := func(errText string) {
 		rec.LatencyMs = time.Since(start).Milliseconds()
@@ -210,9 +296,9 @@ func (c *Client) ChatJSON(ctx context.Context, feature, promptVersion, model, sy
 		},
 		Temperature: openai.Float(0),
 	}
-	resp, err := c.cli.Chat.Completions.New(ctx, params)
+	resp, err := c.clientFor(ctx).Chat.Completions.New(ctx, params)
 	if err != nil {
-		done(err.Error())
+		done(errText(err))
 		return "", &UpstreamError{Op: feature, Err: err, Retryable: true}
 	}
 	rec.InputTokens = resp.Usage.PromptTokens
@@ -230,6 +316,7 @@ func (c *Client) ChatJSON(ctx context.Context, feature, promptVersion, model, sy
 // (base64 data URL) plus text. Used by Snap-a-Menu and proof check.
 func (c *Client) ChatVisionJSON(ctx context.Context, feature, promptVersion, model, system, text, imageDataURL string, name string, schemaDoc map[string]any, log CallLogger) (string, error) {
 	start := time.Now()
+	model = c.resolveModel(model)
 	rec := CallRecord{Feature: feature, Model: model, PromptVersion: promptVersion}
 	done := func(errText string) {
 		rec.LatencyMs = time.Since(start).Milliseconds()
@@ -262,9 +349,9 @@ func (c *Client) ChatVisionJSON(ctx context.Context, feature, promptVersion, mod
 		},
 		Temperature: openai.Float(0),
 	}
-	resp, err := c.cli.Chat.Completions.New(ctx, params)
+	resp, err := c.clientFor(ctx).Chat.Completions.New(ctx, params)
 	if err != nil {
-		done(err.Error())
+		done(errText(err))
 		return "", &UpstreamError{Op: feature, Err: err, Retryable: true}
 	}
 	rec.InputTokens = resp.Usage.PromptTokens
@@ -282,11 +369,12 @@ func (c *Client) ChatVisionJSON(ctx context.Context, feature, promptVersion, mod
 // returns the model's reply plus any requested tool calls.
 func (c *Client) ChatTools(ctx context.Context, feature, promptVersion, model, system, user string, tools []openai.ChatCompletionToolUnionParam, log CallLogger) (reply string, calls []ToolCall, retErr error) {
 	start := time.Now()
+	model = c.resolveModel(model)
 	rec := CallRecord{Feature: feature, Model: model, PromptVersion: promptVersion}
 	defer func() {
 		rec.LatencyMs = time.Since(start).Milliseconds()
 		if retErr != nil {
-			rec.ErrText = retErr.Error()
+			rec.ErrText = errText(retErr)
 		}
 		if log != nil {
 			log(ctx, rec)
@@ -302,7 +390,7 @@ func (c *Client) ChatTools(ctx context.Context, feature, promptVersion, model, s
 		Tools:       tools,
 		Temperature: openai.Float(0),
 	}
-	resp, err := c.cli.Chat.Completions.New(ctx, params)
+	resp, err := c.clientFor(ctx).Chat.Completions.New(ctx, params)
 	if err != nil {
 		retErr = &UpstreamError{Op: feature, Err: err, Retryable: true}
 		return "", nil, retErr

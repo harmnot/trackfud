@@ -17,16 +17,21 @@ export interface Money {
 }
 
 /**
- * Live dispatch detail attached to an order when the API exposes it
- * (openapi.yaml `Order.delivery`: status, eta, route, courier profile on
- * order detail). Absent on the merchant list today — the courier line falls
- * back to the order status (see `courierLine` in OrdersPage).
+ * Live dispatch detail attached to an order (openapi.yaml `Order.delivery`).
+ * Merchant list rows carry the light `{status, eta_s}` line plus the assigned
+ * courier's public first name + mode once someone accepts (both null while
+ * dispatch is still searching); order detail (`GET /v1/merchant/orders/{id}`)
+ * carries the full view with route and courier profile. Absent before
+ * dispatch creates the delivery — the courier line then falls back to the
+ * order status (see `courierLine`).
  */
 export interface OrderDelivery {
   status?: string;
   eta_s?: number | null;
-  courier_name?: string;
-  courier_mode?: string;
+  courier_name?: string | null;
+  courier_mode?: string | null;
+  courierName?: string | null;
+  courierMode?: string | null;
 }
 
 export interface Order {
@@ -43,7 +48,6 @@ export interface Order {
   total: Money;
   commission: Money;
   size_class: string;
-  spill_risk: string;
   payment_method: string;
   payment_status: string;
   dropoff?: { lat: number; lng: number; note?: string };

@@ -1,17 +1,35 @@
 /** Shared pay module: wallet pay (idempotent) + card via a server-created
- * Paddle payment confirmed by the webhook (or instantly in demo mode).
- * Card data never touches the app: Paddle.js renders its own overlay. */
+ * Paddle transaction confirmed by the webhook (or instantly in demo mode).
+ * Card data never touches the app: Paddle.js renders its own overlay.
+ *
+ * Flow (fixes the sandbox `required price_id` failure):
+ *   create pending payment (topup / card order)
+ *   → POST /customer/payments/{id}/checkout (server mints a Paddle transaction
+ *     with our payment id in custom_data; needs TF_PADDLE_API_KEY)
+ *   → Paddle.Checkout.open({ transactionId }) (paddle.ts, never ad-hoc amount)
+ *   → poll GET /customer/payments/{id} until the webhook marks it paid
+ *   → demo mode (no Paddle token / 503 checkout): confirmPaymentDemo instead.
+ */
 
 import { ApiError } from '../../lib/api';
 import { logger } from '../../lib/logger';
-import { confirmPaymentDemo, createCardOrder, createTopup, createWalletOrder } from './api';
+import {
+  confirmPaymentDemo,
+  createCardOrder,
+  createPaymentCheckout,
+  createTopup,
+  createWalletOrder,
+  fetchOrder,
+  fetchPayment,
+} from './api';
+import { openPaddleCheckout, paddleConfig, PaddleError } from './paddle';
 import type { Order, Payment } from './types';
 
 export type PayMethod = 'wallet' | 'card';
 
 export type PayResult =
   | { kind: 'placed'; order: Order }
-  | { kind: 'card_authorized'; transactionId: string; totalMinor: number; currency: string }
+  | { kind: 'card_authorized'; transactionId: string; totalMinor: number; currency: string; orderId: string | null }
   | { kind: 'topup_credited'; payment: Payment };
 
 /** Typed pay failure for user-safe messages. */
@@ -21,62 +39,6 @@ export class PayError extends Error {
     super(message);
     this.code = code;
   }
-}
-
-type PaddleCheckoutArgs = {
-  items: Array<{ priceId?: string; quantity: number; amount?: string }>;
-  customer?: { email?: string };
-};
-
-type PaddleInstance = {
-  Checkout: { open: (args: PaddleCheckoutArgs & { settings?: Record<string, unknown> }) => void };
-};
-
-declare global {
-  interface Window {
-    Paddle?: { Setup: (args: { token: string }) => void } & Partial<PaddleInstance>;
-  }
-}
-
-const PADDLE_CDN = 'https://cdn.paddle.com/paddle/v2/paddle.js';
-
-function paddleToken(): string | null {
-  const token = import.meta.env.VITE_PADDLE_CLIENT_TOKEN as string | undefined;
-  return token && token.length > 0 ? token : null;
-}
-
-function paddleEnv(): 'sandbox' | 'production' {
-  return (import.meta.env.VITE_PADDLE_ENV as string | undefined) === 'production' ? 'production' : 'sandbox';
-}
-
-/** Lazy-load Paddle.js (CDN) and initialise with the client token. */
-async function loadPaddle(): Promise<PaddleInstance> {
-  const token = paddleToken();
-  if (!token) {
-    throw new PayError('paddle_missing', 'Card payments are not configured in this build. Please pay with wallet.');
-  }
-  if (window.Paddle?.Checkout) return window.Paddle as PaddleInstance;
-  await new Promise<void>((resolve, reject) => {
-    const script = document.querySelector<HTMLScriptElement>('script[data-paddle]');
-    if (script?.dataset['loaded'] === 'true') {
-      resolve();
-      return;
-    }
-    const tag = script ?? document.createElement('script');
-    tag.src = PADDLE_CDN;
-    tag.async = true;
-    tag.dataset['paddle'] = 'true';
-    tag.onload = () => {
-      tag.dataset['loaded'] = 'true';
-      resolve();
-    };
-    tag.onerror = () => reject(new PayError('paddle_failed', 'Could not load the card payment form. Try wallet pay.'));
-    if (!script) document.head.appendChild(tag);
-  });
-  if (!window.Paddle) throw new PayError('paddle_failed', 'Card payment form failed to start. Try wallet pay.');
-  window.Paddle.Setup({ token });
-  if (paddleEnv() === 'sandbox') logger.info('paddle sandbox overlay ready', {});
-  return window.Paddle as PaddleInstance;
 }
 
 type OrderInput = {
@@ -104,37 +66,20 @@ export async function payWithWallet(args: OrderInput): Promise<Order> {
   }
 }
 
-/** Open the Paddle sandbox overlay for an already-created server payment. */
-function openPaddleOverlay(args: {
-  payment: Payment;
-  email?: string;
-  priceId?: string;
-  totalMinor: number;
-  currency: string;
-}): Promise<PayResult> {
-  return loadPaddle().then((paddle) => new Promise<PayResult>((resolve, reject) => {
-    const amount = (args.totalMinor / 100).toFixed(2);
-    try {
-      paddle.Checkout.open({
-        items: [{ priceId: args.priceId, quantity: 1, amount: args.priceId ? undefined : amount }],
-        customer: args.email ? { email: args.email } : undefined,
-        settings: {
-          theme: 'dark',
-          customData: { payment_id: args.payment.id },
-          successUrl: `${location.origin}/customer/orders?card=authorized`,
-          checkoutCompleted: (tx: unknown) => {
-            const id = typeof tx === 'object' && tx !== null
-              ? String((tx as Record<string, unknown>)['id'] ?? args.payment.id)
-              : args.payment.id;
-            logger.info('paddle sandbox authorized', { id, payment: args.payment.id });
-            resolve({ kind: 'card_authorized', transactionId: id, totalMinor: args.totalMinor, currency: args.currency });
-          },
-        },
-      });
-    } catch (err) {
-      reject(new PayError('paddle_failed', err instanceof Error ? err.message : 'Card payment failed.'));
+/** Poll one payment until paid/failed or the deadline (webhook is async). */
+async function pollPayment(args: { paymentId: string; timeoutMs: number }): Promise<Payment> {
+  const deadline = Date.now() + args.timeoutMs;
+  let last: Payment | null = null;
+  while (Date.now() < deadline) {
+    const payment = await fetchPayment({ id: args.paymentId });
+    last = payment;
+    if (payment.status === 'paid' || payment.status === 'failed' || payment.status === 'refunded' || payment.status === 'cancelled') {
+      return payment;
     }
-  }));
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+  if (!last) throw new PayError('confirm_unavailable', 'Could not check the payment status. Please check your orders.');
+  return last;
 }
 
 /** Try the demo-mode instant confirm (same apply path as the webhook). */
@@ -147,8 +92,62 @@ async function tryDemoConfirm(args: { paymentId: string }): Promise<{ payment: P
   }
 }
 
+/** Open the Paddle overlay for a server transaction, then poll the payment.
+ * Returns the updated payment: paid (webhook applied) or still pending when
+ * the webhook is slow — callers map that to placed / card_authorized. */
+async function authorizeViaPaddle(args: {
+  payment: Payment;
+  email?: string;
+  priceId?: string;
+}): Promise<Payment> {
+  let transactionId: string | undefined;
+  let priceId = args.priceId?.trim() || undefined;
+  try {
+    const checkout = await createPaymentCheckout({ paymentId: args.payment.id });
+    transactionId = checkout.transactionId;
+    logger.info('paddle transaction created', { payment: args.payment.id, env: checkout.paddleEnv });
+  } catch (err) {
+    if (priceId) {
+      logger.warn('payment checkout failed, falling back to price', {
+        err: err instanceof Error ? err.message : 'unknown',
+      });
+    } else if (err instanceof ApiError && (err.status === 503 || err.status === 404)) {
+      // No server Paddle key (or provider off): demo confirm handles it.
+      throw new PayError(
+        'paddle_missing',
+        'Card payments need the server Paddle key (or demo mode). Please pay with wallet.',
+      );
+    } else if (priceId) {
+      logger.warn('payment checkout failed, price fallback', { err: err instanceof Error ? err.message : 'unknown' });
+    } else {
+      throw new PayError('paddle_failed', err instanceof Error ? err.message : 'Card checkout failed.');
+    }
+  }
+  if (!transactionId && !priceId) {
+    throw new PayError(
+      'paddle_missing',
+      'Card checkout is not ready (no Paddle transaction). Retry, or pay with wallet.',
+    );
+  }
+  try {
+    await openPaddleCheckout({
+      transactionId,
+      priceId,
+      email: args.email,
+      paymentId: args.payment.id,
+      onAuthorized: (id) => logger.info('paddle sandbox authorized', { id, payment: args.payment.id }),
+    });
+  } catch (err) {
+    if (err instanceof PaddleError && err.code === 'missing') {
+      throw new PayError('paddle_missing', err.message);
+    }
+    throw new PayError('paddle_failed', err instanceof Error ? err.message : 'Card payment failed.');
+  }
+  return pollPayment({ paymentId: args.payment.id, timeoutMs: 60_000 });
+}
+
 /** Card pay: create the `awaiting_payment` order server-side, then confirm.
- * With a Paddle client token the sandbox overlay collects the card and the
+ * With Paddle configured the sandbox overlay collects the card and the
  * webhook places the order; otherwise demo mode confirms instantly. */
 export async function payWithCard(args: OrderInput & { email?: string; priceId?: string }): Promise<PayResult> {
   const key = crypto.randomUUID();
@@ -162,22 +161,35 @@ export async function payWithCard(args: OrderInput & { email?: string; priceId?:
     throw new PayError('order_failed', err instanceof Error ? err.message : 'Order failed.');
   }
   logger.info('card order created, awaiting payment', { id: created.order.id, payment: created.payment.id });
-  if (paddleToken()) {
-    return openPaddleOverlay({
-      payment: created.payment,
-      email: args.email,
-      priceId: args.priceId,
+  const { token } = await paddleConfig().catch(() => ({ token: null as string | null }));
+  if (token || args.priceId) {
+    const payment = await authorizeViaPaddle({ payment: created.payment, email: args.email, priceId: args.priceId });
+    if (payment.status === 'paid') {
+      // The webhook places the order in the same transaction that pays it:
+      // paid payment ⇒ placed order. Re-read it so the caller can navigate.
+      try {
+        const detail = await fetchOrder({ id: created.order.id });
+        logger.info('card order placed via webhook', { id: detail.order.id });
+        return { kind: 'placed', order: detail.order };
+      } catch (err) {
+        logger.warn('order re-read after card pay failed', { err: err instanceof Error ? err.message : 'unknown' });
+      }
+    }
+    if (payment.status === 'failed') {
+      throw new PayError('paddle_failed', 'The card payment failed. Please retry or pay with wallet.');
+    }
+    return {
+      kind: 'card_authorized',
+      transactionId: payment.orderId ?? created.payment.id,
       totalMinor: created.order.total.amount_minor,
       currency: created.order.currency,
-    });
+      orderId: created.order.id,
+    };
   }
   const confirmed = await tryDemoConfirm({ paymentId: created.payment.id });
   if (confirmed?.order) {
     logger.info('card order placed via demo confirm', { id: confirmed.order.id });
     return { kind: 'placed', order: confirmed.order };
-  }
-  if (confirmed) {
-    return { kind: 'card_authorized', transactionId: created.payment.id, totalMinor: created.order.total.amount_minor, currency: created.order.currency };
   }
   throw new PayError(
     'paddle_missing',
@@ -186,7 +198,7 @@ export async function payWithCard(args: OrderInput & { email?: string; priceId?:
 }
 
 /** Wallet top-up: create the pending top-up server-side, then confirm it.
- * With a Paddle client token the sandbox overlay collects the card and the
+ * With Paddle configured the sandbox overlay collects the card and the
  * webhook credits the wallet; otherwise demo mode credits instantly. */
 export async function topUpWithPaddle(args: { amountMinor: number; currency: string; email?: string }): Promise<PayResult> {
   const key = crypto.randomUUID();
@@ -200,20 +212,17 @@ export async function topUpWithPaddle(args: { amountMinor: number; currency: str
     throw new PayError('topup_failed', err instanceof Error ? err.message : 'Top-up failed.');
   }
   logger.info('top-up created, awaiting payment', { id: payment.id });
-  if (paddleToken()) {
-    const overlay = await openPaddleOverlay({
-      payment,
-      email: args.email,
-      totalMinor: payment.amountMinor,
-      currency: payment.currency,
-    });
-    if (overlay.kind === 'card_authorized') {
-      const confirmed = await tryDemoConfirm({ paymentId: payment.id });
-      if (confirmed && confirmed.payment.status === 'paid') {
-        return { kind: 'topup_credited', payment: confirmed.payment };
-      }
+  const { token } = await paddleConfig().catch(() => ({ token: null as string | null }));
+  if (token) {
+    const updated = await authorizeViaPaddle({ payment, email: args.email });
+    if (updated.status === 'paid') {
+      logger.info('top-up credited via webhook', { id: payment.id });
+      return { kind: 'topup_credited', payment: updated };
     }
-    return overlay;
+    if (updated.status === 'failed') {
+      throw new PayError('topup_failed', 'The top-up payment failed. Please retry.');
+    }
+    return { kind: 'card_authorized', transactionId: updated.id, totalMinor: updated.amountMinor, currency: updated.currency, orderId: null };
   }
   const confirmed = await tryDemoConfirm({ paymentId: payment.id });
   if (confirmed && confirmed.payment.status === 'paid') {

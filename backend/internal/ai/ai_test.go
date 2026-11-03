@@ -13,14 +13,14 @@ import (
 
 func TestParseMenuOutputValid(t *testing.T) {
 	raw := `{"items":[
-		{"name":{"en":"Soup","id":"Sop"},"size_class":"M","spill_risk":"medium","travels_well":true,"confident":true},
-		{"name":{"en":"Tea"},"size_class":"S","spill_risk":"high","travels_well":false,"price_unreadable":true}
+		{"name":{"en":"Soup","id":"Sop"},"size_class":"M","travels_well":true,"confident":true},
+		{"name":{"en":"Tea"},"size_class":"S","travels_well":false,"price_unreadable":true}
 	]}`
 	out, err := ParseMenuOutput(raw)
 	if err != nil {
 		t.Fatalf("valid menu rejected: %v", err)
 	}
-	if len(out.Items) != 2 || out.Items[0].SizeClass != "M" || out.Items[1].SpillRisk != "high" {
+	if len(out.Items) != 2 || out.Items[0].SizeClass != "M" || out.Items[1].TravelsWell {
 		t.Fatalf("menu parsed wrong: %+v", out)
 	}
 	for _, it := range out.Items {
@@ -31,7 +31,7 @@ func TestParseMenuOutputValid(t *testing.T) {
 }
 
 func TestParseMenuOutputStripsSneakedPrice(t *testing.T) {
-	raw := `{"items":[{"name":{"en":"X"},"size_class":"S","spill_risk":"low","travels_well":true,"price_minor":9999}]}`
+	raw := `{"items":[{"name":{"en":"X"},"size_class":"S","travels_well":true,"price_minor":9999}]}`
 	out, err := ParseMenuOutput(raw)
 	if err != nil {
 		t.Fatalf("menu with sneaked price should parse (then strip): %v", err)
@@ -46,10 +46,10 @@ func TestParseMenuOutputStripsSneakedPrice(t *testing.T) {
 
 func TestParseMenuOutputRejectsBadEnums(t *testing.T) {
 	for _, raw := range []string{
-		`{"items":[{"name":{"en":"X"},"size_class":"XL","spill_risk":"low","travels_well":true}]}`,
-		`{"items":[{"name":{"en":"X"},"size_class":"S","spill_risk":"nuclear","travels_well":true}]}`,
+		`{"items":[{"name":{"en":"X"},"size_class":"XL","travels_well":true}]}`,
+		`{"items":[{"name":{"en":"X"},"travels_well":true}]}`,
 		`{"items":[]}`,
-		`{"items":[{"size_class":"S","spill_risk":"low","travels_well":true}]}`,
+		`{"items":[{"size_class":"S","travels_well":true}]}`,
 		`not json`,
 	} {
 		if _, err := ParseMenuOutput(raw); err == nil {

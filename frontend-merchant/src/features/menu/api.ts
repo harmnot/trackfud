@@ -1,7 +1,7 @@
 /** Typed calls for menu CRUD + presigned photo upload (openapi.yaml shapes). */
 import { api, ApiError } from '../../lib/api';
 import { logger } from '../../lib/logger';
-import type { LocaleMap, MenuCategory, MenuItem, SizeClass, SpillRisk } from './types';
+import type { LocaleMap, MenuCategory, MenuItem, SizeClass } from './types';
 
 export interface CategoryPatch {
   name?: LocaleMap;
@@ -14,7 +14,6 @@ export interface ItemInput {
   description?: LocaleMap;
   price_minor?: number;
   size_class: SizeClass;
-  spill_risk: SpillRisk;
   travels_well?: boolean;
   photo_url?: string;
   available?: boolean;
@@ -94,6 +93,9 @@ export async function deleteItem(params: { id: string }): Promise<void> {
 export interface Presign {
   file_id: string;
   upload_url: string;
+  /** 'r2' = direct-to-R2 PUT, then POST complete; 'local' = PUT to the API. */
+  storage?: 'r2' | 'local';
+  expires_at?: string;
 }
 
 /** Ask the API for an upload slot (same contract as the R2 presign). */
@@ -106,10 +108,25 @@ export async function presignPhoto(params: { contentType: string; sizeBytes: num
   return data;
 }
 
-/** PUT bytes to a presigned upload URL. */
-export async function putUpload(params: { url: string; blob: Blob }): Promise<void> {
-  const res = await fetch(params.url, { method: 'PUT', body: params.blob });
+/** PUT bytes to a presigned upload URL.
+ * Always sends the blob's Content-Type: R2 presigned PUTs sign it, and the
+ * local API fallback ignores the header. */
+export async function putUpload(params: { url: string; blob: Blob; contentType?: string }): Promise<void> {
+  const res = await fetch(params.url, {
+    method: 'PUT',
+    headers: params.contentType ? { 'Content-Type': params.contentType } : undefined,
+    body: params.blob,
+  });
   if (!res.ok) throw new ApiError(`upload failed (${res.status})`, res.status);
+}
+
+/** Mark an R2 direct upload ready after the PUT (local uploads skip this). */
+export async function completeUpload(params: { fileId: string; sizeBytes: number }): Promise<void> {
+  await api(`/files/${params.fileId}/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ size_bytes: params.sizeBytes }),
+  });
 }
 
 /** Public content URL for an uploaded file id. */
@@ -124,7 +141,6 @@ export interface ServerImportDraft {
   price_minor: number | null;
   price_unreadable?: boolean;
   size_class: SizeClass;
-  spill_risk: SpillRisk;
   travels_well: boolean;
   category_hint?: string;
   confident: boolean;
@@ -210,7 +226,10 @@ export async function uploadPhoto(params: { blob: Blob; contentType: string }): 
  */
 export async function uploadMenuFile(params: { blob: Blob; contentType: string }): Promise<{ fileId: string; photoUrl: string }> {
   const slot = await presignPhoto({ contentType: params.contentType, sizeBytes: params.blob.size });
-  await putUpload({ url: slot.upload_url, blob: params.blob });
+  await putUpload({ url: slot.upload_url, blob: params.blob, contentType: params.contentType });
+  if (slot.storage === 'r2') {
+    await completeUpload({ fileId: slot.file_id, sizeBytes: params.blob.size });
+  }
   return { fileId: slot.file_id, photoUrl: contentUrl({ fileId: slot.file_id }) };
 }
 

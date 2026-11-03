@@ -7,15 +7,11 @@ import (
 )
 
 // Merchant menu CRUD (B2 catalog). Every write is scoped to the caller's own
-// merchant; items carry the size_class/spill_risk/travels_well labels that
-// feed dispatch (Snap-a-Menu output lands here in B6).
+// merchant; items carry the size_class/travels_well labels that feed dispatch
+// (Snap-a-Menu output lands here in B6).
 
 func validSize(s string) bool {
 	return s == "S" || s == "M" || s == "L"
-}
-
-func validSpill(s string) bool {
-	return s == "low" || s == "medium" || s == "high"
 }
 
 // validLocaleMap requires at least one non-empty locale string.
@@ -147,7 +143,6 @@ type menuItemBody struct {
 	Description map[string]string `json:"description"`
 	PriceMinor  *int64            `json:"price_minor"`
 	SizeClass   string            `json:"size_class"`
-	SpillRisk   string            `json:"spill_risk"`
 	TravelsWell *bool             `json:"travels_well"`
 	PhotoURL    string            `json:"photo_url"`
 	Available   *bool             `json:"available"`
@@ -163,9 +158,6 @@ func (b *menuItemBody) validateForCreate() string {
 	if !validSize(b.SizeClass) {
 		return "size_class must be S, M or L"
 	}
-	if !validSpill(b.SpillRisk) {
-		return "spill_risk must be low, medium or high"
-	}
 	return ""
 }
 
@@ -174,7 +166,7 @@ func (s *Server) listMenuItems(w http.ResponseWriter, r *http.Request) {
 	if mid == "" {
 		return
 	}
-	q := `SELECT id, category_id, name, description, price_minor, size_class, spill_risk, travels_well, photo_url, available
+	q := `SELECT id, category_id, name, description, price_minor, size_class, travels_well, photo_url, available
 		FROM menu_items WHERE merchant_id=$1`
 	args := []any{mid}
 	if cat := r.URL.Query().Get("category_id"); cat != "" {
@@ -198,19 +190,19 @@ func scanMenuItems(rows interface {
 }) []map[string]any {
 	out := []map[string]any{}
 	for rows.Next() {
-		var id, size, spill, photo string
+		var id, size, photo string
 		var cat *string
 		var nameB, descB []byte
 		var price int64
 		var tw, avail bool
-		if err := rows.Scan(&id, &cat, &nameB, &descB, &price, &size, &spill, &tw, &photo, &avail); err != nil {
+		if err := rows.Scan(&id, &cat, &nameB, &descB, &price, &size, &tw, &photo, &avail); err != nil {
 			continue
 		}
 		var name, desc map[string]string
 		_ = json.Unmarshal(nameB, &name)
 		_ = json.Unmarshal(descB, &desc)
 		out = append(out, map[string]any{"id": id, "category_id": cat, "name": name, "description": desc,
-			"price_minor": price, "size_class": size, "spill_risk": spill,
+			"price_minor": price, "size_class": size,
 			"travels_well": tw, "photo_url": photo, "available": avail})
 	}
 	return out
@@ -257,8 +249,8 @@ func (s *Server) createMenuItem(w http.ResponseWriter, r *http.Request) {
 	}
 	var id string
 	if err := s.db.QueryRow(r.Context(), `INSERT INTO menu_items(merchant_id,category_id,name,description,price_minor,
-		size_class,spill_risk,travels_well,photo_url,available) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-		mid, cat, nameB, descB, price, b.SizeClass, b.SpillRisk, tw, b.PhotoURL, avail).Scan(&id); err != nil {
+		size_class,travels_well,photo_url,available) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+		mid, cat, nameB, descB, price, b.SizeClass, tw, b.PhotoURL, avail).Scan(&id); err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
 	}
@@ -320,13 +312,6 @@ func (s *Server) updateMenuItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, _ = s.db.Exec(r.Context(), `UPDATE menu_items SET size_class=$3 WHERE id=$1 AND merchant_id=$2`, id, mid, b.SizeClass)
-	}
-	if b.SpillRisk != "" {
-		if !validSpill(b.SpillRisk) {
-			problem(w, 400, "Validation failed", "spill_risk must be low, medium or high")
-			return
-		}
-		_, _ = s.db.Exec(r.Context(), `UPDATE menu_items SET spill_risk=$3 WHERE id=$1 AND merchant_id=$2`, id, mid, b.SpillRisk)
 	}
 	if b.TravelsWell != nil {
 		_, _ = s.db.Exec(r.Context(), `UPDATE menu_items SET travels_well=$3 WHERE id=$1 AND merchant_id=$2`, id, mid, *b.TravelsWell)

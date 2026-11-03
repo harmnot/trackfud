@@ -42,7 +42,6 @@ export type Order = {
   total: Money;
   commission: Money;
   size_class: string;
-  spill_risk: string;
   payment_method: string;
   payment_status: string;
   dropoff?: GeoPoint;
@@ -128,11 +127,16 @@ export type DeliveryCourier = {
   weeksKm: number[];
 };
 
-/** Live delivery attached to order detail (`delivery` from the same endpoint). */
+/** Live delivery attached to order detail (`delivery` from the same endpoint).
+ * `customerPickup` is true once the customer chose to collect the order
+ * themselves after no courier was found (the server status reads `cancelled`). */
 export type DeliveryInfo = {
   status: string;
   kind: string;
+  customerPickup: boolean;
   etaS: number | null;
+  routePolyline: string;
+  routeWarning: string;
   courier: DeliveryCourier | null;
   courierLast: CourierPosition | null;
 };
@@ -177,7 +181,10 @@ export function parseDeliveryInfo(raw: unknown): DeliveryInfo | null {
   return {
     status: m['status'],
     kind: typeof m['type'] === 'string' ? m['type'] : '',
+    customerPickup: m['customer_pickup'] === true,
     etaS: typeof m['eta_s'] === 'number' ? m['eta_s'] : null,
+    routePolyline: typeof m['route_polyline'] === 'string' ? m['route_polyline'] : '',
+    routeWarning: typeof m['route_warning'] === 'string' ? m['route_warning'] : '',
     courier,
     courierLast,
   };
@@ -221,6 +228,78 @@ export function parseWsOrderStatus(raw: unknown): WsOrderStatus | null {
   const ok = (ORDER_STATUSES as readonly string[]).includes(m['status']);
   if (!ok) return null;
   return { order_id: m['order_id'], status: m['status'] as OrderStatus };
+}
+
+/** Typed `courier.location` WebSocket frame: the live courier dot the backend
+ * sends the customer once per accepted GPS batch while a delivery is active.
+ * `position.at` is the server receive time (same clock as `courier_last.at`). */
+export type WsCourierLocation = {
+  orderId: string;
+  deliveryId: string;
+  position: CourierPosition;
+  heading: number | null;
+};
+
+const MAX_LAT_DEG = 90;
+const MAX_LNG_DEG = 180;
+
+function isCoord(raw: unknown, maxAbs: number): raw is number {
+  return typeof raw === 'number' && Number.isFinite(raw) && Math.abs(raw) <= maxAbs;
+}
+
+/** Narrow an unknown WS payload to a `courier.location` frame: in-range
+ * coordinates plus a parseable server timestamp, otherwise null. */
+export function parseWsCourierLocation(raw: unknown): WsCourierLocation | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const m = raw as Record<string, unknown>;
+  if (m['type'] !== 'courier.location') return null;
+  if (typeof m['order_id'] !== 'string' || m['order_id'] === '') return null;
+  const lat = m['lat'];
+  const lng = m['lng'];
+  if (!isCoord(lat, MAX_LAT_DEG) || !isCoord(lng, MAX_LNG_DEG)) return null;
+  const ts = m['ts'];
+  if (typeof ts !== 'string' || Number.isNaN(Date.parse(ts))) return null;
+  const heading = m['heading'];
+  return {
+    orderId: m['order_id'],
+    deliveryId: typeof m['delivery_id'] === 'string' ? m['delivery_id'] : '',
+    position: { lat, lng, at: ts },
+    heading: typeof heading === 'number' && Number.isFinite(heading) ? heading : null,
+  };
+}
+
+/** Epoch ms of a courier fix; an unparsable time sorts oldest. */
+function fixMs(pos: CourierPosition): number {
+  const ms = Date.parse(pos.at);
+  return Number.isNaN(ms) ? Number.NEGATIVE_INFINITY : ms;
+}
+
+function sameCourier(a: DeliveryCourier | null, b: DeliveryCourier | null): boolean {
+  if (!a || !b) return false;
+  return a.firstName === b.firstName && a.mode === b.mode;
+}
+
+/** Move the cached courier dot to a live WS fix. Returns `detail` itself
+ * (nothing to update) when the frame is for another order, no delivery is
+ * cached yet (the poll fills it in), or the dot shown is already newer. */
+export function applyCourierFix(args: { detail: OrderDetail; fix: WsCourierLocation }): OrderDetail {
+  const { detail, fix } = args;
+  const delivery = detail.delivery;
+  if (detail.order.id !== fix.orderId || !delivery) return detail;
+  if (delivery.courierLast && fixMs(delivery.courierLast) > fixMs(fix.position)) return detail;
+  return { ...detail, delivery: { ...delivery, courierLast: fix.position } };
+}
+
+/** Keep the newer courier dot when a poll response lands after a fresher WS
+ * fix, so a slow poll never drags the marker backwards. The server wins when
+ * it shares no dot or names a different courier (reassignment). */
+export function keepNewerCourierFix(args: { fresh: OrderDetail; cached: OrderDetail | undefined }): OrderDetail {
+  const shown = args.cached?.delivery?.courierLast ?? null;
+  const delivery = args.fresh.delivery;
+  if (!shown || !delivery?.courierLast) return args.fresh;
+  if (!sameCourier(args.cached?.delivery?.courier ?? null, delivery.courier)) return args.fresh;
+  if (fixMs(shown) <= fixMs(delivery.courierLast)) return args.fresh;
+  return { ...args.fresh, delivery: { ...delivery, courierLast: shown } };
 }
 
 /** Narrow an unknown order payload to an `Order`. */

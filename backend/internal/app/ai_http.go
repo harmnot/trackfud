@@ -246,10 +246,10 @@ func (s *Server) translateMessage(w http.ResponseWriter, r *http.Request, orderI
 		b.To = "en"
 	}
 	var body, lang, translated string
-	var moderated, flagged bool
-	err := s.db.QueryRow(r.Context(), `SELECT body, lang, translated_body, moderated, flagged
+	var moderated, flagged, storedLive bool
+	err := s.db.QueryRow(r.Context(), `SELECT body, lang, translated_body, moderated, flagged, translated_live
 		FROM order_messages WHERE id=$1 AND order_id=$2`, b.MessageID, orderID).
-		Scan(&body, &lang, &translated, &moderated, &flagged)
+		Scan(&body, &lang, &translated, &moderated, &flagged, &storedLive)
 	if err != nil {
 		problem(w, 404, "Not found", "message not found")
 		return
@@ -262,9 +262,11 @@ func (s *Server) translateMessage(w http.ResponseWriter, r *http.Request, orderI
 		writeJSON(w, 200, map[string]any{"translated_body": body, "moderated": true, "flagged": false, "live": false})
 		return
 	}
+	// A translation the AI job already stored keeps its own live flag.
 	out := translated
-	live := false
+	live := storedLive
 	if out == "" || !moderated {
+		live = false
 		flagged = ai.FallbackModerate(body)
 		if s.ai.cli.HasKey() {
 			ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
@@ -284,7 +286,9 @@ func (s *Server) translateMessage(w http.ResponseWriter, r *http.Request, orderI
 			}
 			s.logAICall(r.Context(), ai.CallRecord{Feature: "chat_translate", Model: s.ai.cli.SparkModel(), PromptVersion: ai.PromptTranslateV1, Fallback: true})
 		}
-		_, _ = s.db.Exec(r.Context(), `UPDATE order_messages SET translated_body=$2, moderated=true, flagged=$3 WHERE id=$1`, b.MessageID, out, flagged)
+		_, _ = s.db.Exec(r.Context(), `UPDATE order_messages SET translated_body=$2, moderated=true, flagged=$3, translated_live=$4 WHERE id=$1`,
+			b.MessageID, out, flagged, live)
+		s.notifyChatTranslated(r.Context(), orderID, b.MessageID, out, b.To, live)
 	}
 	writeJSON(w, 200, map[string]any{"translated_body": out, "moderated": true, "flagged": flagged, "live": live})
 }
@@ -314,7 +318,7 @@ func (s *Server) coachWeekly(w http.ResponseWriter, r *http.Request) {
 		currency = "IDR"
 	}
 	activeMin := int(activeS / 60)
-	goal := s.cfg.Health.WhoWeeklyActiveMin
+	goal := s.effectiveHealthGoal(r.Context(), "")
 	rep := ai.FallbackCoach(dist, activeMin, goal, earned, currency)
 	live := false
 	if s.ai.cli.HasKey() {
@@ -351,7 +355,11 @@ func (s *Server) coachWeekly(w http.ResponseWriter, r *http.Request) {
 // or typed box:
 //
 //	{"type":"voice.transcript","text":"...","lang":"id"}
-//	{"type":"voice.end"}
+//	{"type":"voice.end","lang":"en"}
+//
+// voice.end "lang" is the courier's UI language (en|id|ms), the hint for
+// transcribing that utterance's PCM; missing or unsupported values fall
+// back to ai.DefaultVoiceLang ("id").
 //
 // Replies are JSON: {"type":"voice.intent","intent","reply_text",
 // "offer_id","confirmation","live"}. Accept proposals carry a signed
@@ -371,7 +379,8 @@ func (s *Server) voiceConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	_ = conn.WriteJSON(map[string]any{"type": "voice.hello", "live": s.ai.cli.HasKey(), "sample_rate": 24000, "format": "int16-mono"})
+	// live = intent model reachable; transcribe = audio goes to Muse Voice Transcribe.
+	_ = conn.WriteJSON(map[string]any{"type": "voice.hello", "live": s.ai.cli.HasKey(), "transcribe": s.ai.liveTranscription(), "sample_rate": 24000, "format": "int16-mono"})
 	var pcm []byte
 	var gotTranscript bool
 	for {
@@ -406,8 +415,9 @@ func (s *Server) voiceConnect(w http.ResponseWriter, r *http.Request) {
 				gotTranscript = false
 				continue
 			}
+			uiLang, _ := f["lang"].(string)
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-			text, rec, terr := s.ai.transcriber.Transcribe(ctx, pcm, "id")
+			text, rec, terr := s.ai.transcriber.Transcribe(ctx, pcm, ai.VoiceLangHint(uiLang))
 			cancel()
 			s.logAICall(context.Background(), rec)
 			pcm = nil
@@ -423,6 +433,15 @@ func (s *Server) voiceConnect(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// voiceHedgeAfter: healthy voice tool calls answer in ~2–4 s.
+const voiceHedgeAfter = 6 * time.Second
+
+// voiceToolsResult carries ChatTools' two results through ai.Hedge.
+type voiceToolsResult struct {
+	reply string
+	calls []ai.ToolCall
+}
+
 // voiceRespond runs one transcript through intent → reply → (proposal).
 func (s *Server) voiceRespond(conn interface {
 	WriteJSON(v any) error
@@ -434,10 +453,16 @@ func (s *Server) voiceRespond(conn interface {
 	if s.ai.cli.HasKey() {
 		tctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		user := "transcript: " + text
-		reply, calls, err := s.ai.cli.ChatTools(tctx, "voice_copilot", ai.PromptVoiceV1, s.ai.cli.SparkModel(),
-			ai.VoiceSystemV1, user, ai.ToolDefs(), s.aiLog)
+		// A tool call answers in a few seconds; one parked on a cold container
+		// hangs for the whole budget, so a hedged duplicate goes out after
+		// voiceHedgeAfter (the courier is mid-run, waiting on this reply).
+		res, err := ai.Hedge(tctx, voiceHedgeAfter, func(hctx context.Context) (voiceToolsResult, error) {
+			reply, calls, cerr := s.ai.cli.ChatTools(hctx, "voice_copilot", ai.PromptVoiceV1, s.ai.cli.SparkModel(),
+				ai.VoiceSystemV1, user, ai.ToolDefs(), s.aiLog)
+			return voiceToolsResult{reply: reply, calls: calls}, cerr
+		})
 		cancel()
-		_ = reply
+		calls := res.calls
 		if err == nil && len(calls) > 0 {
 			if _, perr := ai.ParseToolCall(calls[0]); perr == nil {
 				intent = ai.IntentForTool(calls[0].Name)
@@ -589,7 +614,7 @@ func (s *Server) voiceConfirm(w http.ResponseWriter, r *http.Request) {
 		problem(w, code, "Accept failed", msg)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"delivery": s.deliveryViewForCourier(r.Context(), d)})
+	writeJSON(w, 200, s.deliveryEnvelopeForCourier(r.Context(), d))
 }
 
 // ---------- demo controls (admin, demo mode) ----------
@@ -645,6 +670,8 @@ func (s *Server) demoBotsStart(w http.ResponseWriter, r *http.Request) {
 	}
 	on := true
 	s.setDemoState(nil, &on, b.Speed)
+	s.writeAudit(r.Context(), r, "demo.bots_start", "demo", "demo_state", "",
+		map[string]any{}, map[string]any{"bots_running": true, "bot_speed": b.Speed})
 	writeJSON(w, 200, map[string]any{"bots_running": true, "bot_speed": b.Speed})
 }
 
@@ -654,6 +681,8 @@ func (s *Server) demoBotsStop(w http.ResponseWriter, r *http.Request) {
 	}
 	off := false
 	s.setDemoState(nil, &off, "")
+	s.writeAudit(r.Context(), r, "demo.bots_stop", "demo", "demo_state", "",
+		map[string]any{}, map[string]any{"bots_running": false})
 	writeJSON(w, 200, map[string]any{"bots_running": false})
 }
 
@@ -671,6 +700,8 @@ func (s *Server) demoForceNoCourier(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setDemoState(b.Enabled, nil, "")
+	s.writeAudit(r.Context(), r, "demo.force_no_courier", "demo", "demo_state", "",
+		map[string]any{}, map[string]any{"force_no_courier": *b.Enabled})
 	writeJSON(w, 200, map[string]any{"force_no_courier": *b.Enabled})
 }
 
@@ -711,7 +742,7 @@ func (s *Server) demoReset(w http.ResponseWriter, r *http.Request) {
 		`DELETE FROM activity_sessions`,
 		`DELETE FROM fitness_attempts`,
 		`DELETE FROM checkpoint_photos`,
-		`DELETE FROM jobs`,
+		`DELETE FROM river_job`,
 		`DELETE FROM outbox_emails`,
 		`UPDATE couriers SET rating_bayes=4.5, rating_count=0, rating_stars_sum=0, deliveries_count=0, last_delivery_at=NULL, updated_at=now()`,
 		`UPDATE demo_state SET force_no_courier=false, bots_running=false, bot_speed='x1', updated_at=now() WHERE id=1`,
@@ -729,6 +760,8 @@ func (s *Server) demoReset(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "Server error", err.Error())
 		return
 	}
+	s.writeAudit(r.Context(), r, "demo.reset", "demo", "demo_state", "",
+		map[string]any{}, map[string]any{"reset": true})
 	writeJSON(w, 200, map[string]any{"reset": true})
 }
 

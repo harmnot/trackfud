@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ApiError } from '../../lib/api';
-import { Button, Note, Skeleton } from '../../components/ui';
+import { Button, Note, Skeleton, TextInput } from '../../components/ui';
 import i18n from '../../i18n';
 import { useChat, useLiveChat, useSendChat, useTranslateChat } from './hooks';
 import { QUICK_REPLY_IDS, type ChatMessage, type QuickReplyId } from './types';
@@ -120,15 +120,15 @@ export function ChatPanel(args: { orderId: string }) {
           void sendText(draft);
         }}
       >
-        <label className="flex-1" aria-label={t('chat.title')}>
-          <input
-            className="tb-input"
+        <div className="flex-1">
+          <TextInput
             value={draft}
             maxLength={500}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={setDraft}
             placeholder={t('chat.placeholder')}
+            aria-label={t('chat.title')}
           />
-        </label>
+        </div>
         <Button type="submit" variant="ember" disabled={draft.trim().length === 0 || send.isPending}>
           {t('chat.send')}
         </Button>

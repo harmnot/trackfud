@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
     Link,
     Navigate,
@@ -7,7 +7,6 @@ import {
     useLocation,
     useNavigate,
 } from "react-router";
-import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
     api,
@@ -17,8 +16,8 @@ import {
     ApiError,
 } from "./lib/api";
 import { activateUpdate, watchSwUpdates } from "./lib/swUpdate";
+import { subscribeOfferPush } from "./lib/push";
 import {
-    Badge,
     Button,
     Dropdown,
     Field,
@@ -31,16 +30,26 @@ import {
     Stat,
     img,
 } from "./components/ui";
+import { RequireAuth } from "./features/auth/RequireAuth";
+import { RequirePartner } from "./features/profile/RequirePartner";
+import { usePartner } from "./features/profile/usePartner";
+import { useRun } from "./features/run/sessionStore";
+import { WorkSessionTracker } from "./features/run/WorkSessionTracker";
+import { bindChatFrames } from "./features/chat/chatStore";
 import { useStaff } from "./features/staff/staffStore";
 import { StatusPage } from "./pages/StatusPage";
 import { RunSetupPage } from "./pages/RunSetupPage";
 import { RunModePage } from "./pages/RunModePage";
+import { PlannerPage } from "./pages/PlannerPage";
 import { DeliveryPage } from "./pages/DeliveryPage";
+import { OrdersPage } from "./pages/OrdersPage";
+import { OrderDetailPage } from "./pages/OrderDetailPage";
 import { WalletPage } from "./pages/WalletPage";
 import { StaffPage } from "./pages/StaffPage";
 import { TracksPage } from "./pages/TracksPage";
 import { ChatPage } from "./pages/ChatPage";
 import { RatingsPage } from "./pages/RatingsPage";
+import FitnessPage from "./features/fitness/FitnessPage";
 import i18n from "./i18n";
 
 const ICONS: Record<string, React.ReactNode> = {
@@ -108,6 +117,19 @@ const ICONS: Record<string, React.ReactNode> = {
             <path d="M6 20l3-5 2-4 3 2 3 1M9 11l3-2 2 3-1 4" />
         </svg>
     ),
+    orders: (
+        <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <path d="M8 6h13M8 12h13M8 18h13" />
+            <path d="M3.5 6h0M3.5 12h0M3.5 18h0" />
+        </svg>
+    ),
     bag: (
         <svg
             viewBox="0 0 24 24"
@@ -146,6 +168,21 @@ function Shell({
     const { t } = useTranslation();
     const loc = useLocation();
     const user = savedUser();
+    // Partner links stay hidden until the application state is known —
+    // non-partners must never see delivery/wallet in the nav.
+    const { unlocked: partnerUnlocked, partner, isLoading: partnerLoading } = usePartner({
+        enabled: user !== null,
+    });
+    const partnerLinks = user !== null && !partnerLoading && partnerUnlocked;
+    // PLAN §8.2: the fitness test is a one-time gate. Approved partners (and
+    // on-shift staff, who skip it per §4.2) never see the fitness nav again.
+    const staffActive = useStaff((s) => s.active);
+    const runActive = useRun((s) => s.phase === "active");
+    const hideFitness = partner === "approved" || staffActive;
+    // While a work session is active the Run tab resumes it (/run). Going
+    // back to /run-setup would open a second session, so the tab, the logo
+    // and the route guard below all point at /run until End session.
+    const runTo = runActive ? "/run" : "/run-setup";
     const [updateReady, setUpdateReady] = useState(false);
     useEffect(() => {
         watchSwUpdates(() => setUpdateReady(true));
@@ -171,87 +208,115 @@ function Shell({
             <header className="tb-topbar">
                 <div className="tb-topbar-inner">
                     <Link
-                        to="/run-setup"
+                        to={runTo}
                         className="tb-hello"
                         style={{ textDecoration: "none", color: "inherit" }}
                     >
                         <small>Trackfud · {t("app.brand")}</small>
                         <strong>{hello}</strong>
                     </Link>
-                    <span className="flex items-center gap-2">
-                        <Dropdown
-                            label="Language"
-                            value={i18n.language}
-                            options={[
-                                { value: "en", label: "English" },
-                                { value: "id", label: "Indonesia" },
-                                { value: "ms", label: "Melayu" },
-                            ]}
-                            onChange={(v) => {
-                                localStorage.setItem("tb:courier:lang", v);
-                                void i18n.changeLanguage(v);
-                            }}
-                        />
-                        <Link
-                            to={user ? "/status" : "/login"}
-                            className="tb-avatar"
-                            aria-label={t("nav.status")}
-                        >
-                            {user ? user.email.slice(0, 1).toUpperCase() : "?"}
-                        </Link>
-                    </span>
+                    {/* Account cluster is for signed-in users only. */}
+                    {user !== null && (
+                        <span className="flex items-center gap-2">
+                            <Dropdown
+                                label="Language"
+                                value={i18n.language}
+                                options={[
+                                    { value: "en", label: "English" },
+                                    { value: "id", label: "Indonesia" },
+                                    { value: "ms", label: "Melayu" },
+                                ]}
+                                onChange={(v) => {
+                                    localStorage.setItem("tb:courier:lang", v);
+                                    void i18n.changeLanguage(v);
+                                }}
+                            />
+                            <Link
+                                to="/status"
+                                className="tb-avatar"
+                                aria-label={t("nav.status")}
+                            >
+                                {user.email.slice(0, 1).toUpperCase()}
+                            </Link>
+                        </span>
+                    )}
                 </div>
             </header>
             <main className="flex-1 px-4 pt-4 pb-28" key={loc.pathname}>
                 {children}
             </main>
-            <nav className="tb-nav" aria-label="Main">
-                <Link
-                    to="/run-setup"
-                    aria-current={
-                        loc.pathname.startsWith("/run") ? "page" : undefined
-                    }
-                >
-                    {ICONS.run}
-                    {t("nav.run")}
-                </Link>
-                <Link
-                    to="/delivery"
-                    aria-current={
-                        loc.pathname === "/delivery" ? "page" : undefined
-                    }
-                >
-                    {ICONS.bag}
-                    {t("nav.delivery")}
-                </Link>
-                <Link
-                    to="/wallet"
-                    aria-current={
-                        loc.pathname === "/wallet" ? "page" : undefined
-                    }
-                >
-                    {ICONS.coin}
-                    {t("nav.wallet")}
-                </Link>
-                <Link
-                    to="/fitness"
-                    aria-current={
-                        loc.pathname === "/fitness" ? "page" : undefined
-                    }
-                >
-                    {ICONS.bolt}
-                    {t("nav.fitness")}
-                </Link>
-                <Link
-                    to={user ? "/status" : "/login"}
-                    aria-current={
-                        loc.pathname === "/status" ? "page" : undefined
-                    }
-                >
-                    {ICONS.medal}
-                    {t("nav.status")}
-                </Link>
-            </nav>
+            {/* No navbar for guests; partner links only for approved partners/staff. */}
+            {user !== null && (
+                <nav className="tb-nav" aria-label="Main">
+                    <Link
+                        to={runTo}
+                        aria-current={
+                            loc.pathname.startsWith("/run") ? "page" : undefined
+                        }
+                    >
+                        {ICONS.run}
+                        {t("nav.run")}
+                    </Link>
+                    {partnerLinks && (
+                        <Link
+                            to="/delivery"
+                            aria-current={
+                                loc.pathname === "/delivery" ? "page" : undefined
+                            }
+                        >
+                            {ICONS.bag}
+                            {t("nav.delivery")}
+                        </Link>
+                    )}
+                    {partnerLinks && (
+                        <Link
+                            to="/orders"
+                            aria-current={
+                                loc.pathname.startsWith("/orders")
+                                    ? "page"
+                                    : undefined
+                            }
+                        >
+                            {ICONS.orders}
+                            {t("nav.orders")}
+                        </Link>
+                    )}
+                    {partnerLinks && (
+                        <Link
+                            to="/wallet"
+                            aria-current={
+                                loc.pathname === "/wallet" ? "page" : undefined
+                            }
+                        >
+                            {ICONS.coin}
+                            {t("nav.wallet")}
+                        </Link>
+                    )}
+                    {/* Fitness is a one-time gate: hidden once approved or in staff
+                        mode (PLAN §8.2 / §4.2). The /fitness route guard below
+                        enforces the same rule for direct URL visits. */}
+                    {!hideFitness && (
+                        <Link
+                            to="/fitness"
+                            aria-current={
+                                loc.pathname === "/fitness" ? "page" : undefined
+                            }
+                        >
+                            {ICONS.bolt}
+                            {t("nav.fitness")}
+                        </Link>
+                    )}
+                    <Link
+                        to="/status"
+                        aria-current={
+                            loc.pathname === "/status" ? "page" : undefined
+                        }
+                    >
+                        {ICONS.medal}
+                        {t("nav.status")}
+                    </Link>
+                </nav>
+            )}
         </div>
     );
 }
@@ -305,9 +370,10 @@ function AuthPage({ mode }: { mode: "login" | "signup" }) {
                         e.preventDefault();
                         void submit(
                             mode === "login" ? "/auth/login" : "/auth/signup",
-                            // Ordinary Stride & Earn account: no partner role
-                            // at signup. Partner unlocks after onboarding +
-                            // fitness test + CMS approval (see /onboarding).
+                            // Ordinary account: no role is forced at signup
+                            // (the server defaults it from the platform).
+                            // Partner unlocks after onboarding + fitness
+                            // test + CMS approval (see /onboarding).
                             mode === "login"
                                 ? { email, password }
                                 : { email, password, name },
@@ -320,6 +386,8 @@ function AuthPage({ mode }: { mode: "login" | "signup" }) {
                                 className="tb-input"
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
+                                placeholder={t("onboard.fullNamePh", { defaultValue: "e.g. Budi Santoso" })}
+                                autoComplete="name"
                             />
                         </Field>
                     )}
@@ -353,17 +421,6 @@ function AuthPage({ mode }: { mode: "login" | "signup" }) {
                               : t("auth.signup")}
                     </Button>
                 </form>
-                <div className="mt-3">
-                    <Button
-                        variant="ink"
-                        block
-                        onClick={() =>
-                            void submit("/auth/demo-login", { app: "courier" })
-                        }
-                    >
-                        {t("auth.demo")}
-                    </Button>
-                </div>
                 <p className="mt-4 text-sm text-center font-bold">
                     <Link
                         to={mode === "login" ? "/signup" : "/login"}
@@ -578,6 +635,8 @@ function Onboarding() {
                                         fullName: e.target.value,
                                     })
                                 }
+                                placeholder={t("onboard.fullNamePh", { defaultValue: "e.g. Budi Santoso" })}
+                                autoComplete="name"
                             />
                         </Field>
                     </Item>
@@ -600,31 +659,31 @@ function Onboarding() {
                         <p className="tb-sub">{t("onboard.profileHint")}</p>
                         <div className="flex flex-col gap-3 mt-2">
                             <Field label={t("onboard.birthDate")}>
-                                <input className="tb-input" type="date" value={draft.birthDate} onChange={(e) => setDraft({ ...draft, birthDate: e.target.value })} />
+                                <input className="tb-input" type="date" value={draft.birthDate} onChange={(e) => setDraft({ ...draft, birthDate: e.target.value })} aria-label={t("onboard.birthDate")} />
                             </Field>
                             <Field label={t("onboard.nationality")}>
-                                <input className="tb-input" value={draft.nationality} onChange={(e) => setDraft({ ...draft, nationality: e.target.value })} />
+                                <input className="tb-input" value={draft.nationality} onChange={(e) => setDraft({ ...draft, nationality: e.target.value })} placeholder={t("onboard.nationalityPh", { defaultValue: "e.g. Indonesian" })} />
                             </Field>
                             <Field label={t("onboard.city")}>
-                                <input className="tb-input" value={draft.city} onChange={(e) => setDraft({ ...draft, city: e.target.value })} />
+                                <input className="tb-input" value={draft.city} onChange={(e) => setDraft({ ...draft, city: e.target.value })} placeholder={t("onboard.cityPh", { defaultValue: "e.g. Jakarta" })} autoComplete="address-level2" />
                             </Field>
                             <Field label={t("onboard.country")}>
-                                <input className="tb-input" value={draft.country} onChange={(e) => setDraft({ ...draft, country: e.target.value })} />
+                                <input className="tb-input" value={draft.country} onChange={(e) => setDraft({ ...draft, country: e.target.value })} placeholder={t("onboard.countryPh", { defaultValue: "e.g. Indonesia" })} autoComplete="country-name" />
                             </Field>
                             <Field label={t("onboard.emergencyName")}>
-                                <input className="tb-input" value={draft.emergencyName} onChange={(e) => setDraft({ ...draft, emergencyName: e.target.value })} />
+                                <input className="tb-input" value={draft.emergencyName} onChange={(e) => setDraft({ ...draft, emergencyName: e.target.value })} placeholder={t("onboard.emergencyNamePh", { defaultValue: "e.g. Siti Rahma" })} autoComplete="name" />
                             </Field>
                             <Field label={t("onboard.emergencyPhone")}>
-                                <input className="tb-input" placeholder="+62812…" value={draft.emergencyPhone} onChange={(e) => setDraft({ ...draft, emergencyPhone: e.target.value })} />
+                                <input className="tb-input" placeholder="+62812…" value={draft.emergencyPhone} onChange={(e) => setDraft({ ...draft, emergencyPhone: e.target.value })} inputMode="tel" autoComplete="tel" />
                             </Field>
                             <Field label={t("onboard.idType")}>
-                                <input className="tb-input" value={draft.idDocType} onChange={(e) => setDraft({ ...draft, idDocType: e.target.value })} />
+                                <input className="tb-input" value={draft.idDocType} onChange={(e) => setDraft({ ...draft, idDocType: e.target.value })} placeholder={t("onboard.idTypePh", { defaultValue: "e.g. KTP" })} />
                             </Field>
                             <Field label={t("onboard.idNumber")}>
-                                <input className="tb-input" value={draft.idNumber} onChange={(e) => setDraft({ ...draft, idNumber: e.target.value })} />
+                                <input className="tb-input" value={draft.idNumber} onChange={(e) => setDraft({ ...draft, idNumber: e.target.value })} placeholder={t("onboard.idNumberPh", { defaultValue: "e.g. 3174…" })} inputMode="numeric" />
                             </Field>
                             <Field label={t("onboard.bagLiters")}>
-                                <input className="tb-input" inputMode="numeric" value={draft.bagLiters} onChange={(e) => setDraft({ ...draft, bagLiters: e.target.value })} />
+                                <input className="tb-input" inputMode="numeric" value={draft.bagLiters} onChange={(e) => setDraft({ ...draft, bagLiters: e.target.value })} placeholder={t("onboard.bagLitersPh", { defaultValue: "e.g. 25" })} />
                             </Field>
                             {mode === "biker" && (
                                 <Field label={t("onboard.bikeType")}>
@@ -712,6 +771,11 @@ function Checklist() {
     function set(k: string, v: boolean) {
         setChecks((c) => ({ ...c, [k]: v }));
     }
+    // ✓ only once this device is registered for offer pushes: permission
+    // alone delivers nothing. Denied/unsupported stay unchecked, silently.
+    async function verifyPush(): Promise<void> {
+        set("notif", (await subscribeOfferPush()) === "subscribed");
+    }
     const rows: Array<{ key: string; label: string; run: () => void }> = [
         {
             key: "gps",
@@ -749,10 +813,7 @@ function Checklist() {
         {
             key: "notif",
             label: t("check.notif"),
-            run: () =>
-                void Notification.requestPermission().then((p) =>
-                    set("notif", p === "granted"),
-                ),
+            run: () => void verifyPush(),
         },
         {
             key: "motion",
@@ -823,345 +884,220 @@ function Checklist() {
     );
 }
 
-function haversine(
-    a: { lat: number; lng: number },
-    b: { lat: number; lng: number },
-): number {
-    const R = 6371000;
-    const dLat = ((b.lat - a.lat) * Math.PI) / 180;
-    const dLng = ((b.lng - a.lng) * Math.PI) / 180;
-    const s =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos((a.lat * Math.PI) / 180) *
-            Math.cos((b.lat * Math.PI) / 180) *
-            Math.sin(dLng / 2) ** 2;
-    return 2 * R * Math.asin(Math.sqrt(s));
-}
-
 function Fitness() {
-    const { t } = useTranslation();
-    const cfg = useQuery({
-        queryKey: ["cfg"],
-        queryFn: () =>
-            api<{
-                fitness: {
-                    runner_distance_m: number;
-                    runner_moving_limit_s: number;
-                    biker_distance_m: number;
-                    biker_moving_limit_s: number;
-                };
-            }>("/config/public"),
-    });
-    const [recording, setRecording] = useState(false);
-    const [dist, setDist] = useState(0);
-    const [moving, setMoving] = useState(0);
-    const [elapsed, setElapsed] = useState(0);
-    const [points, setPoints] = useState(0);
-    const [mode, setMode] = useState<"runner" | "biker">("runner");
-    const [manual, setManual] = useState({ d: "2000", m: "800", e: "1000" });
-    const [result, setResult] = useState("");
-    const watch = useRef<number | null>(null);
-    const last = useRef<{ lat: number; lng: number; ts: number } | null>(null);
-    const startTs = useRef(0);
-    useEffect(
-        () => () => {
-            if (watch.current !== null)
-                navigator.geolocation.clearWatch(watch.current);
-        },
-        [],
-    );
-    function start() {
-        setDist(0);
-        setMoving(0);
-        setElapsed(0);
-        setPoints(0);
-        last.current = null;
-        startTs.current = Date.now();
-        setRecording(true);
-        watch.current = navigator.geolocation.watchPosition(
-            (pos) => {
-                const cur = {
-                    lat: pos.coords.latitude,
-                    lng: pos.coords.longitude,
-                    ts: Date.now(),
-                };
-                setElapsed(Math.round((Date.now() - startTs.current) / 1000));
-                if (last.current) {
-                    const d = haversine(last.current, cur);
-                    const dt = (cur.ts - last.current.ts) / 1000;
-                    if (d > 1 && dt > 0) {
-                        setDist((v) => v + d);
-                        if (d / dt >= 0.8) setMoving((v) => v + Math.round(dt));
-                    }
-                }
-                last.current = cur;
-                setPoints((v) => v + 1);
-            },
-            undefined,
-            { enableHighAccuracy: true },
-        );
-    }
-    function stop() {
-        if (watch.current !== null)
-            navigator.geolocation.clearWatch(watch.current);
-        setRecording(false);
-    }
-    async function submit(useManual: boolean) {
-        const payload = useManual
-            ? {
-                  mode,
-                  distance_m: parseFloat(manual.d),
-                  moving_s: parseInt(manual.m, 10),
-                  elapsed_s: parseInt(manual.e, 10),
-                  points: 20,
-              }
-            : {
-                  mode,
-                  distance_m: Math.round(dist),
-                  moving_s: moving,
-                  elapsed_s: elapsed,
-                  points,
-              };
-        try {
-            const fit = await api<{ passed: boolean }>(
-                "/courier/fitness-test",
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload),
-                },
-            );
-            const sub = await api<{ status: string }>(
-                "/courier/application/submit",
-                { method: "POST" },
-            );
-            setResult(
-                `${t("fitness.result")}: fitness ${fit.passed ? "PASS ✓" : "not yet"} · application ${sub.status}`,
-            );
-        } catch (e) {
-            setResult(e instanceof ApiError ? e.message : t("common.error"));
-        }
-    }
-    const staffActive = useStaff((s) => s.active);
-    const target =
-        mode === "biker"
-            ? cfg.data?.fitness.biker_distance_m
-            : cfg.data?.fitness.runner_distance_m;
-    const progress = target ? Math.min(1, dist / target) : 0;
-    const mm = String(Math.floor(moving / 60)).padStart(2, "0");
-    const ss = String(moving % 60).padStart(2, "0");
     return (
         <Shell hello="Session">
-            <Page>
-                <h1 className="tb-display">{t("fitness.title")}</h1>
-                <p className="tb-sub">
-                    Target {target ?? "…"} m · {t("app.safety")}
-                </p>
-                {staffActive && (
-                    <div className="mt-3">
-                        <Note tone="info">{t("staff.noTest")}</Note>
-                    </div>
-                )}
-                <div className="tb-timer mt-3">
-                    {recording ? (
-                        <p className="tb-rec live">Recording · {points} pts</p>
-                    ) : (
-                        <p className="tb-rec">Ready when you are</p>
-                    )}
-                    <div className="mt-3">
-                        <Ring
-                            progress={progress}
-                            center={`${mm}:${ss}`}
-                            sub="moving time"
-                        />
-                    </div>
-                    <p className="mt-2 font-bold">
-                        {Math.round(dist)} m · {elapsed}s elapsed
-                    </p>
-                </div>
-                <div className="tb-stats mt-3">
-                    <Stat
-                        value={`${Math.round(dist)} m`}
-                        label={t("fitness.distance")}
-                    />
-                    <Stat value={`${moving}s`} label={t("fitness.moving")} />
-                    <Stat value={`${elapsed}s`} label={t("fitness.elapsed")} />
-                </div>
-                <div className="mt-2">
-                    <p className="tb-label">{t("onboard.mode")}</p>
-                    <Dropdown
-                        label={t("onboard.mode")}
-                        full
-                        value={mode}
-                        options={[
-                            {
-                                value: "runner",
-                                label: "Runner",
-                                sub: "2 km / 15 min",
-                            },
-                            {
-                                value: "biker",
-                                label: "Biker",
-                                sub: "5 km / 20 min",
-                            },
-                        ]}
-                        onChange={(v) => setMode(v as "runner" | "biker")}
-                    />
-                </div>
-                <div className="flex gap-2 mt-3">
-                    <div className="flex-1">
-                        {!recording ? (
-                            <Button block variant="sun" onClick={start}>
-                                {t("fitness.start")}
-                            </Button>
-                        ) : (
-                            <Button block variant="danger" onClick={stop}>
-                                {t("fitness.stop")}
-                            </Button>
-                        )}
-                    </div>
-                    <div className="flex-1">
-                        <Button
-                            block
-                            variant="soft"
-                            onClick={() => void submit(false)}
-                        >
-                            {t("fitness.submit")}
-                        </Button>
-                    </div>
-                </div>
-                <p className="tb-sub mt-3">{t("fitness.checkpoint")}</p>
-                <div className="tb-card mt-3">
-                    <p className="text-sm font-bold">{t("fitness.desktop")}</p>
-                    <div className="grid grid-cols-3 gap-2 mt-2">
-                        <Field label="Dist m">
-                            <input
-                                className="tb-input"
-                                value={manual.d}
-                                onChange={(e) =>
-                                    setManual({ ...manual, d: e.target.value })
-                                }
-                            />
-                        </Field>
-                        <Field label="Move s">
-                            <input
-                                className="tb-input"
-                                value={manual.m}
-                                onChange={(e) =>
-                                    setManual({ ...manual, m: e.target.value })
-                                }
-                            />
-                        </Field>
-                        <Field label="Elap s">
-                            <input
-                                className="tb-input"
-                                value={manual.e}
-                                onChange={(e) =>
-                                    setManual({ ...manual, e: e.target.value })
-                                }
-                            />
-                        </Field>
-                    </div>
-                    <div className="mt-2">
-                        <Button
-                            variant="soft"
-                            block
-                            onClick={() => void submit(true)}
-                        >
-                            {t("fitness.submit")} (desktop)
-                        </Button>
-                    </div>
-                </div>
-                {result && (
-                    <div className="mt-3">
-                        <Note tone="info">{result}</Note>
-                    </div>
-                )}
-            </Page>
+            <FitnessPage />
         </Shell>
     );
 }
 
+/**
+ * While a work session is active the setup screen is unreachable: the Run
+ * tab, the logo and direct URL visits all land on /run until End session.
+ * This keeps one session per courier (PLAN §3) and matches the navbar.
+ */
+function RequireNoActiveRun({ children }: { children: React.ReactNode }) {
+    const phase = useRun((s) => s.phase);
+    if (phase === "active") return <Navigate to="/run" replace />;
+    return <>{children}</>;
+}
+
+/**
+ * Fitness is a one-time gate (PLAN §8.2): approved partners never see it
+ * again, and staff skip it entirely (PLAN §4.2, invite-only fallback).
+ * Direct /fitness visits redirect to /status like the hidden nav tab does.
+ */
+function RequireFitnessVisible({ children }: { children: React.ReactNode }) {
+    const { t } = useTranslation();
+    const { partner, isLoading } = usePartner();
+    const staffActive = useStaff((s) => s.active);
+    if (isLoading) {
+        return (
+            <Page>
+                <div className="tb-skel" style={{ height: 120 }} role="status" aria-label={t("common.loading")} />
+            </Page>
+        );
+    }
+    if (partner === "approved" || staffActive) return <Navigate to="/status" replace />;
+    return <>{children}</>;
+}
+
 
 export default function App() {
+    // Chat lines + translations reach the store on every screen (idempotent).
+    useEffect(() => bindChatFrames(), []);
+    return (
+        <>
+            {/* Mounted once beside the routes: GPS + batched uploads keep
+                streaming on every screen while a work session is active. */}
+            <WorkSessionTracker />
+            <AppRoutes />
+        </>
+    );
+}
+
+/** Route table: each screen with its auth/partner guards and shell. */
+function AppRoutes() {
     return (
         <Routes>
             <Route path="/" element={<Navigate to="/run-setup" replace />} />
             <Route path="/login" element={<AuthPage mode="login" />} />
             <Route path="/signup" element={<AuthPage mode="signup" />} />
-            <Route path="/onboarding" element={<Onboarding />} />
-            <Route path="/checklist" element={<Checklist />} />
-            <Route path="/fitness" element={<Fitness />} />
+            <Route
+                path="/onboarding"
+                element={
+                    <RequireAuth>
+                        <Onboarding />
+                    </RequireAuth>
+                }
+            />
+            <Route
+                path="/checklist"
+                element={
+                    <RequireAuth>
+                        <Checklist />
+                    </RequireAuth>
+                }
+            />
+            <Route
+                path="/fitness"
+                element={
+                    <RequireAuth>
+                        <RequireFitnessVisible>
+                            <Fitness />
+                        </RequireFitnessVisible>
+                    </RequireAuth>
+                }
+            />
             <Route
                 path="/status"
                 element={
-                    <Shell hello="Account">
-                        <StatusPage />
-                    </Shell>
+                    <RequireAuth>
+                        <Shell hello="Account">
+                            <StatusPage />
+                        </Shell>
+                    </RequireAuth>
                 }
             />
             <Route
                 path="/run-setup"
                 element={
-                    <Shell hello="Start">
-                        <RunSetupPage />
-                    </Shell>
+                    <RequireAuth>
+                        <RequireNoActiveRun>
+                            <Shell hello="Start">
+                                <RunSetupPage />
+                            </Shell>
+                        </RequireNoActiveRun>
+                    </RequireAuth>
                 }
             />
             <Route
                 path="/run"
                 element={
-                    <Shell hello="Session">
-                        <RunModePage />
-                    </Shell>
+                    <RequireAuth>
+                        <Shell hello="Session">
+                            <RunModePage />
+                        </Shell>
+                    </RequireAuth>
+                }
+            />
+            <Route
+                path="/planner"
+                element={
+                    <RequireAuth>
+                        <Shell hello="AI Plan">
+                            <PlannerPage />
+                        </Shell>
+                    </RequireAuth>
                 }
             />
             <Route
                 path="/delivery"
                 element={
-                    <Shell hello="Delivery">
-                        <DeliveryPage />
-                    </Shell>
+                    <RequireAuth>
+                        <Shell hello="Delivery">
+                            <DeliveryPage />
+                        </Shell>
+                    </RequireAuth>
+                }
+            />
+            <Route
+                path="/orders"
+                element={
+                    <RequireAuth>
+                        <RequirePartner>
+                            <Shell hello="Orders">
+                                <OrdersPage />
+                            </Shell>
+                        </RequirePartner>
+                    </RequireAuth>
+                }
+            />
+            <Route
+                path="/orders/:id"
+                element={
+                    <RequireAuth>
+                        <RequirePartner>
+                            <Shell hello="Orders">
+                                <OrderDetailPage />
+                            </Shell>
+                        </RequirePartner>
+                    </RequireAuth>
                 }
             />
             <Route
                 path="/wallet"
                 element={
-                    <Shell hello="Wallet">
-                        <WalletPage />
-                    </Shell>
+                    <RequireAuth>
+                        <Shell hello="Wallet">
+                            <WalletPage />
+                        </Shell>
+                    </RequireAuth>
                 }
             />
             <Route
                 path="/staff"
                 element={
-                    <Shell hello="Staff">
-                        <StaffPage />
-                    </Shell>
+                    <RequireAuth>
+                        <Shell hello="Staff">
+                            <StaffPage />
+                        </Shell>
+                    </RequireAuth>
                 }
             />
             <Route
                 path="/tracks"
                 element={
-                    <Shell hello="Tracks">
-                        <TracksPage />
-                    </Shell>
+                    <RequireAuth>
+                        <Shell hello="Tracks">
+                            <TracksPage />
+                        </Shell>
+                    </RequireAuth>
                 }
             />
             <Route
                 path="/chat"
                 element={
-                    <Shell hello="Chat">
-                        <ChatPage />
-                    </Shell>
+                    <RequireAuth>
+                        <RequirePartner>
+                            <Shell hello="Chat">
+                                <ChatPage />
+                            </Shell>
+                        </RequirePartner>
+                    </RequireAuth>
                 }
             />
             <Route
                 path="/ratings"
                 element={
-                    <Shell hello="Ratings">
-                        <RatingsPage />
-                    </Shell>
+                    <RequireAuth>
+                        <RequirePartner>
+                            <Shell hello="Ratings">
+                                <RatingsPage />
+                            </Shell>
+                        </RequirePartner>
+                    </RequireAuth>
                 }
             />
             <Route path="*" element={<Navigate to="/run-setup" replace />} />

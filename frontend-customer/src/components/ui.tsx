@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
+import type { InputHTMLAttributes, ReactNode, Ref, TextareaHTMLAttributes } from 'react';
 
 /** Ultra-HiFi primitives for the Customer app. */
 
@@ -21,13 +21,6 @@ export function dishImage(enName: string): string {
 /** Banner per restaurant currency/region. */
 export function bannerImage(currency: string): string {
   return currency === 'GBP' ? img('banner-london.jpg') : img('banner-jakarta.jpg');
-}
-
-/** Deterministic pseudo-rating 4.4–4.9 from an id string. */
-export function ratingFor(id: string): string {
-  let h = 0;
-  for (const c of id) h = (h * 31 + c.charCodeAt(0)) % 100;
-  return (4.4 + (h % 6) / 10).toFixed(1);
 }
 
 export function Page({ children }: { children: ReactNode }) {
@@ -142,6 +135,332 @@ export function Dropdown({
             </button>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+export function Switch({
+  checked,
+  onChange,
+  label,
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: ReactNode;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="tb-switch">
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+      <span className="tb-track" aria-hidden />
+      {label}
+    </label>
+  );
+}
+
+export type SelectOption = { value: string; label: string };
+
+type FieldText = { label?: ReactNode; hint?: ReactNode; error?: ReactNode };
+
+/** Hi-fi single-line text field: design-system input + label/hint/error. */
+export function TextInput({
+  label,
+  hint,
+  error,
+  value,
+  onChange,
+  inputRef,
+  className = '',
+  ...rest
+}: FieldText & {
+  value: string;
+  onChange: (v: string) => void;
+  inputRef?: Ref<HTMLInputElement>;
+  className?: string;
+} & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'label'>) {
+  const autoId = useId();
+  const id = rest.id ?? autoId;
+  return (
+    <>
+      {label ? <label className="tb-label" htmlFor={id}>{label}</label> : null}
+      <input
+        {...rest}
+        id={id}
+        ref={inputRef}
+        className={`tb-input${error ? ' tb-input-error' : ''}${className ? ` ${className}` : ''}`}
+        aria-invalid={error ? true : undefined}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {error ? <span className="tb-field-error" role="alert">{error}</span>
+        : hint ? <span className="tb-field-hint">{hint}</span> : null}
+    </>
+  );
+}
+
+/** Hi-fi multi-line field: same system, taller, vertical resize. */
+export function TextArea({
+  label,
+  hint,
+  error,
+  value,
+  onChange,
+  rows = 3,
+  className = '',
+  ...rest
+}: FieldText & {
+  value: string;
+  onChange: (v: string) => void;
+  rows?: number;
+  className?: string;
+} & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange' | 'label'>) {
+  const autoId = useId();
+  const id = rest.id ?? autoId;
+  return (
+    <>
+      {label ? <label className="tb-label" htmlFor={id}>{label}</label> : null}
+      <textarea
+        {...rest}
+        id={id}
+        rows={rows}
+        className={`tb-input${error ? ' tb-input-error' : ''}${className ? ` ${className}` : ''}`}
+        aria-invalid={error ? true : undefined}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {error ? <span className="tb-field-error" role="alert">{error}</span>
+        : hint ? <span className="tb-field-hint">{hint}</span> : null}
+    </>
+  );
+}
+
+/** Modern hi-fi native select: styled wrapper + chevron, keeps native sheet on mobile. */
+export function Select({
+  label,
+  hint,
+  error,
+  value,
+  options,
+  onChange,
+  ariaLabel,
+  disabled = false,
+  className = '',
+}: FieldText & {
+  value: string;
+  options: SelectOption[];
+  onChange: (v: string) => void;
+  ariaLabel?: string;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const autoId = useId();
+  return (
+    <>
+      {label ? <label className="tb-label" htmlFor={autoId}>{label}</label> : null}
+      <span className="tb-select">
+        <select
+          id={autoId}
+          className={`tb-input tb-select-input${error ? ' tb-input-error' : ''}${className ? ` ${className}` : ''}`}
+          value={value}
+          aria-label={ariaLabel ?? (typeof label === 'string' ? label : undefined)}
+          disabled={disabled}
+          aria-invalid={error ? true : undefined}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          {options.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </span>
+      {error ? <span className="tb-field-error" role="alert">{error}</span>
+        : hint ? <span className="tb-field-hint">{hint}</span> : null}
+    </>
+  );
+}
+
+/** Modern segmented radio group (single-select pills, full keyboard support). */
+export function RadioGroup({
+  label,
+  hint,
+  error,
+  name,
+  value,
+  options,
+  onChange,
+  ariaLabel,
+  disabled = false,
+}: FieldText & {
+  name: string;
+  value: string;
+  options: SelectOption[];
+  onChange: (v: string) => void;
+  ariaLabel?: string;
+  disabled?: boolean;
+}) {
+  const autoId = useId();
+  return (
+    <>
+      {label ? <span className="tb-label" id={autoId}>{label}</span> : null}
+      <span
+        className="tb-radio-group"
+        role="radiogroup"
+        aria-labelledby={label ? autoId : undefined}
+        aria-label={label ? undefined : ariaLabel}
+      >
+        {options.map((o) => {
+          const active = o.value === value;
+          return (
+            <label key={o.value} className={`tb-radio-pill${active ? ' on' : ''}`}>
+              <input
+                type="radio"
+                name={name}
+                value={o.value}
+                checked={active}
+                disabled={disabled}
+                onChange={() => onChange(o.value)}
+              />
+              {o.label}
+            </label>
+          );
+        })}
+      </span>
+      {error ? <span className="tb-field-error" role="alert">{error}</span>
+        : hint ? <span className="tb-field-hint">{hint}</span> : null}
+    </>
+  );
+}
+
+/** Hi-fi custom radio dot for list/card rows (same motion language as Check).
+ * Root is a span (not a label) so rows can stay a single accessible <label>
+ * without nesting labels; dot taps forward to the native input. */
+export function Radio({
+  checked,
+  onChange,
+  ariaLabel,
+  name,
+  value,
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  ariaLabel: string;
+  name?: string;
+  value?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <span
+      className="tb-radio"
+      onClick={(e) => {
+        if (e.target instanceof HTMLInputElement) return;
+        e.currentTarget.querySelector('input')?.click();
+      }}
+    >
+      <input
+        type="radio"
+        name={name}
+        value={value}
+        checked={checked}
+        disabled={disabled}
+        aria-label={ariaLabel}
+        onChange={onChange}
+      />
+      <span className="tb-radio-dot" aria-hidden />
+    </span>
+  );
+}
+
+/** Modern checkbox row with custom box. */
+export function Check({
+  checked,
+  onChange,
+  label,
+  hint,
+  error,
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: ReactNode;
+  hint?: ReactNode;
+  error?: ReactNode;
+  disabled?: boolean;
+}) {
+  return (
+    <>
+      <label className="tb-check">
+        <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+        <span className="tb-box" aria-hidden>
+          <svg viewBox="0 0 24 24">
+            <path d="m5 13 4 4L19 7" />
+          </svg>
+        </span>
+        <span className="tb-check-label">{label}</span>
+      </label>
+      {error ? <span className="tb-field-error" role="alert">{error}</span>
+        : hint ? <span className="tb-field-hint">{hint}</span> : null}
+    </>
+  );
+}
+
+/** Alias kept so all apps share one name for the checkbox control. */
+export const Checkbox = Check;
+
+/** Debounce a fast-changing text value (search boxes) so scroll queries
+ * only refire once the user pauses. */
+export function useDebouncedValue(value: string, delayMs: number): string {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [value, delayMs]);
+  return debounced;
+}
+
+/** Infinite-scroll sentinel + fallback button for paginated lists.
+ * Auto-loads the next page when scrolled near; the button covers
+ * no-IntersectionObserver environments and gives a visible affordance. */
+export function LoadMore({
+  hasMore,
+  loading,
+  label,
+  onLoad,
+}: {
+  hasMore: boolean;
+  loading: boolean;
+  label: string;
+  onLoad: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!hasMore || loading) return;
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) onLoad();
+      },
+      { rootMargin: '480px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, loading, onLoad]);
+  if (!hasMore) return null;
+  return (
+    <div ref={ref} className="mt-3">
+      {loading ? (
+        <Skeleton height={64} />
+      ) : (
+        <Button variant="soft" block onClick={onLoad}>
+          {label}
+        </Button>
       )}
     </div>
   );

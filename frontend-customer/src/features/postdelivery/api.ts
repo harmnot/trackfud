@@ -1,18 +1,18 @@
 /** C3 operations against the real customer endpoints: one combined ratings
  * POST, cheers, messages (+translate), delivery-choice, and impact.
- * Writes go to the server first; only network failures queue in the outbox. */
+ * Writes go to the server first; only network failures queue in the outbox
+ * (never the no-courier choice, see `chooseNoCourier`). */
 
 import { ApiError, api } from '../../lib/api';
 import { logger } from '../../lib/logger';
 import { haversineKm } from '../orders/quote';
-import { cancelOrder } from '../orders/api';
 import type { OrderDetail } from '../orders/types';
 import { enqueue } from './outbox';
 import {
   IMPACT_PLANNING_KMH,
-  NO_COURIER_SNOOZE_S,
   isQuickReplyId,
   parseChatMessage,
+  parseNoCourierOutcome,
   parseRating,
   parseServerImpact,
   parseServerMessage,
@@ -24,6 +24,7 @@ import {
   type CheerId,
   type Impact,
   type NoCourierChoice,
+  type NoCourierOutcome,
   type QuickReplyId,
   type Rating,
   type RatingTarget,
@@ -36,7 +37,6 @@ import {
 const RATINGS_KEY = 'tb:customer:post:ratings';
 const CHAT_KEY = 'tb:customer:post:chat';
 const CHEERS_KEY = 'tb:customer:post:cheers';
-const NOCOURIER_KEY = 'tb:customer:post:nocourier';
 
 /** True when the request never reached the server (offline, DNS, reset). */
 function isNetworkError(err: unknown): boolean {
@@ -366,67 +366,24 @@ export function markCheersSynced(args: { orderId: string }): void {
 
 /* ---------- no-courier choices ---------- */
 
-export type NoCourierRecord = { orderId: string; choice: NoCourierChoice; at: string; snoozeUntil: string | null };
-
-function readNoCourier(): NoCourierRecord[] {
-  const out: NoCourierRecord[] = [];
-  for (const raw of readArray(NOCOURIER_KEY)) {
-    if (typeof raw !== 'object' || raw === null) continue;
-    const m = raw as Record<string, unknown>;
-    if (typeof m['orderId'] !== 'string') continue;
-    const c = m['choice'];
-    if (c !== 'wait' && c !== 'pickup' && c !== 'cancel') continue;
-    out.push({
-      orderId: m['orderId'] as string,
-      choice: c,
-      at: typeof m['at'] === 'string' ? (m['at'] as string) : '',
-      snoozeUntil: typeof m['snoozeUntil'] === 'string' ? (m['snoozeUntil'] as string) : null,
-    });
+/** Send keep-waiting / pickup / cancel through `POST .../delivery-choice`.
+ * The server re-checks that dispatch gave up on an accepted or ready order
+ * (409 otherwise, e.g. a courier was just found) and refunds a cancel in
+ * full through the ledger. Never queued offline: a stale choice must not
+ * replay minutes later, so errors surface and the customer chooses again. */
+export async function chooseNoCourier(args: { orderId: string; choice: NoCourierChoice }): Promise<NoCourierOutcome> {
+  const res = await api<unknown>(`/customer/orders/${args.orderId}/delivery-choice`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ choice: toServerChoice(args.choice) }),
+  });
+  const outcome = parseNoCourierOutcome(res);
+  if (!outcome) {
+    logger.error('delivery-choice payload failed validation', { orderId: args.orderId });
+    throw new Error('Unexpected delivery-choice response from server.');
   }
-  return out;
-}
-
-/** Latest recorded choice for one order (null when the customer chose nothing). */
-export function getNoCourierChoice(args: { orderId: string }): NoCourierRecord | null {
-  const found = readNoCourier().filter((r) => r.orderId === args.orderId);
-  return found.length > 0 ? (found[found.length - 1] as NoCourierRecord) : null;
-}
-
-/** Record wait/pickup/cancel through `POST .../delivery-choice`.
- * `cancel` refunds in full server-side; when the delivery is not in the
- * `no_courier` state (409) it falls back to the real cancel endpoint. */
-export async function chooseNoCourier(args: { orderId: string; choice: NoCourierChoice }): Promise<NoCourierRecord> {
-  try {
-    await api<unknown>(`/customer/orders/${args.orderId}/delivery-choice`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
-      body: JSON.stringify({ choice: toServerChoice(args.choice) }),
-    });
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 409 && args.choice === 'cancel') {
-      await cancelOrder({ id: args.orderId });
-    } else if (!isNetworkError(err)) {
-      throw err;
-    } else if (args.choice === 'cancel') {
-      await cancelOrder({ id: args.orderId });
-    } else {
-      enqueue({
-        path: `/customer/orders/${args.orderId}/delivery-choice`,
-        method: 'POST',
-        body: { choice: toServerChoice(args.choice) },
-      });
-    }
-  }
-  const rec: NoCourierRecord = {
-    orderId: args.orderId,
-    choice: args.choice,
-    at: new Date().toISOString(),
-    snoozeUntil:
-      args.choice === 'wait' ? new Date(Date.now() + NO_COURIER_SNOOZE_S * 1000).toISOString() : null,
-  };
-  writeArray(NOCOURIER_KEY, [...readNoCourier().filter((r) => r.orderId !== args.orderId), rec]);
-  logger.info('no-courier choice', { orderId: args.orderId, choice: args.choice });
-  return rec;
+  logger.info('no-courier choice', { orderId: args.orderId, choice: outcome.choice });
+  return outcome;
 }
 
 /* ---------- impact ---------- */

@@ -1,7 +1,11 @@
 /**
- * Merchant socket: single-use `/v1/ws/ticket` auth, `order.status` events
- * plus forward-compatible staff/delivery notices. Reconnects with backoff.
- * Unknown frames are surfaced as notices, never dropped silently.
+ * Merchant socket: single-use `/v1/ws/ticket` auth, `order.status` events,
+ * live delivery frames (`delivery.eta`, `courier.location`), plus
+ * forward-compatible staff/delivery notices. Reconnects with backoff.
+ * Live frames carry real payloads (ETA seconds, courier dot) — the page
+ * turns them into data refreshes, never into user-facing text. Unknown
+ * frames are logged and dropped so internal frame names never leak into
+ * the kitchen UI as notices.
  */
 import { api } from '../../lib/api';
 import { logger } from '../../lib/logger';
@@ -9,7 +13,14 @@ import { logger } from '../../lib/logger';
 export type MerchantMsg =
   | { type: 'hello'; user_id: string }
   | { type: 'pong' }
-  | { type: 'order.status'; order_id: string; status: string }
+  | { type: 'order.status'; order_id: string; status: string; delivery_status?: string }
+  | { type: 'delivery.assigned'; delivery_id: string; order_id: string; courier_name?: string; courier_mode?: string; delivery_status?: string }
+  | { type: 'merchant.status'; status: string }
+  // Live delivery frames (backend dispatch): `delivery.eta` fires on route
+  // (re)plans with fresh `eta_s`; `courier.location` streams the courier's
+  // live dot roughly every ingest batch while a delivery is active.
+  | { type: 'delivery.eta'; order_id: string; eta_s?: number }
+  | { type: 'courier.location'; order_id: string; lat: number; lng: number; ts?: string }
   | { type: 'notice'; text: string };
 
 type Handler = (msg: MerchantMsg) => void;
@@ -24,11 +35,36 @@ export function parseMerchantMsg(raw: unknown): MerchantMsg | null {
   if (rec.type === 'hello' && typeof rec.user_id === 'string') return { type: 'hello', user_id: rec.user_id };
   if (rec.type === 'pong') return { type: 'pong' };
   if (rec.type === 'order.status' && typeof rec.order_id === 'string' && typeof rec.status === 'string') {
-    return { type: 'order.status', order_id: rec.order_id, status: rec.status };
+    const delivery = typeof rec.delivery_status === 'string' ? rec.delivery_status : undefined;
+    const deliveryId = typeof rec.delivery_id === 'string' ? rec.delivery_id : undefined;
+    void deliveryId;
+    return { type: 'order.status', order_id: rec.order_id, status: rec.status, delivery_status: delivery };
+  }
+  if (rec.type === 'delivery.assigned' && typeof rec.order_id === 'string') {
+    const name = typeof rec.courier_name === 'string' ? rec.courier_name : undefined;
+    const mode = typeof rec.courier_mode === 'string' ? rec.courier_mode : undefined;
+    const st = typeof rec.delivery_status === 'string' ? rec.delivery_status : undefined;
+    const did = typeof rec.delivery_id === 'string' ? rec.delivery_id : '';
+    return { type: 'delivery.assigned', order_id: rec.order_id, delivery_id: did, courier_name: name, courier_mode: mode, delivery_status: st };
+  }
+  if (rec.type === 'merchant.status' && typeof rec.status === 'string') {
+    return { type: 'merchant.status', status: rec.status };
+  }
+  if (rec.type === 'delivery.eta' && typeof rec.order_id === 'string') {
+    const eta = typeof rec.eta_s === 'number' && Number.isFinite(rec.eta_s) ? rec.eta_s : undefined;
+    return { type: 'delivery.eta', order_id: rec.order_id, eta_s: eta };
+  }
+  if (rec.type === 'courier.location' && typeof rec.order_id === 'string' &&
+    typeof rec.lat === 'number' && Number.isFinite(rec.lat) &&
+    typeof rec.lng === 'number' && Number.isFinite(rec.lng)) {
+    const ts = typeof rec.ts === 'string' ? rec.ts : undefined;
+    return { type: 'courier.location', order_id: rec.order_id, lat: rec.lat, lng: rec.lng, ts };
+  }
+  if (rec.type === 'notice' && typeof rec.text === 'string') {
+    return { type: 'notice', text: rec.text };
   }
   if (typeof rec.type === 'string') {
-    const text = typeof rec.text === 'string' ? rec.text : typeof rec.body === 'string' ? rec.body : rec.type;
-    return { type: 'notice', text: String(text) };
+    logger.warn('merchant ws: dropped unknown frame', { type: rec.type });
   }
   return null;
 }

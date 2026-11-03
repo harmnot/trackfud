@@ -10,7 +10,7 @@ import {
 } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, savedUser, setSession, wsTicket, ApiError } from "./lib/api";
+import { api, logout, savedUser, setSession, wsTicket, ApiError } from "./lib/api";
 import { formatDistance, formatMoney } from "./lib/format";
 import { useCart } from "./lib/store";
 import {
@@ -26,47 +26,26 @@ import {
     bannerImage,
     dishImage,
     img,
-    ratingFor,
 } from "./components/ui";
+import { RestaurantRating } from "./features/catalog/RestaurantRating";
 import { AddressesPage } from "./features/addresses/AddressesPage";
+import { useDeliveryLocation } from "./features/addresses/useDeliveryLocation";
+import { RequireAuth } from "./features/auth/RequireAuth";
+import {
+    useCustomerCategories,
+    useMenu,
+    useRestaurant,
+    useRestaurants,
+} from "./features/catalog/hooks";
+import { categoryLabel } from "./features/catalog/types";
+import { AvailabilityBadge } from "./features/catalog/AvailabilityBadge";
 import { CheckoutPage } from "./features/orders/CheckoutPage";
-import { getWallet } from "./features/orders/api";
+import { getFxPreview, getWallet } from "./features/orders/api";
 import { PayError, topUpWithPaddle } from "./features/orders/pay";
-import { ImpactPage } from "./features/postdelivery/ImpactCard";
+import { ImpactPage, ImpactQuote } from "./features/postdelivery/ImpactCard";
 import { SyncBadge } from "./features/postdelivery/ReceiptSync";
 import { OrderPage, OrdersPage } from "./features/tracking/OrderPage";
 import i18n from "./i18n";
-
-type Restaurant = {
-    id: string;
-    name: string;
-    currency: string;
-    address: string;
-    distance_m: number;
-    availability: string;
-    prep_minutes: number;
-};
-type RestaurantDetail = {
-    id: string;
-    name: string;
-    currency: string;
-    address: string;
-    pickup_note: string;
-    prep_minutes: number;
-    lat: number;
-    lng: number;
-    availability: string;
-    distance_m?: number;
-};
-type MenuItem = {
-    id: string;
-    name: Record<string, string>;
-    price: { amount_minor: number; currency: string };
-    travels_well: boolean;
-    size_class: string;
-    spill_risk: string;
-    available: boolean;
-};
 
 const ICONS: Record<string, React.ReactNode> = {
     home: (
@@ -146,6 +125,23 @@ function Shell({ children }: { children: React.ReactNode }) {
     const loc = useLocation();
     const cart = useCart((s) => s.items.reduce((n, i) => n + i.qty, 0));
     const user = savedUser();
+    const delivery = useDeliveryLocation();
+    const topLabel = delivery.activeAddress
+        ? delivery.activeAddress.address
+            ? `${delivery.activeAddress.label} · ${delivery.activeAddress.address}`
+            : delivery.activeAddress.label
+        : delivery.source === "device"
+          ? `${delivery.loc.lat.toFixed(4)}, ${delivery.loc.lng.toFixed(4)}`
+          : null;
+    const topTitle = delivery.activeAddress
+        ? [
+              delivery.activeAddress.label,
+              delivery.activeAddress.address,
+              delivery.activeAddress.note,
+          ]
+              .filter(Boolean)
+              .join(" · ")
+        : (topLabel ?? `Trackfud · ${t("app.tagline")}`);
     return (
         <div className="tb-shell">
             <header className="tb-topbar">
@@ -170,80 +166,90 @@ function Shell({ children }: { children: React.ReactNode }) {
                         </span>
                         <span>
                             <small>{t("nav.location")}</small>
-                            <strong>Trackfud · {t("app.tagline")}</strong>
+                            <strong title={topTitle}>
+                                {topLabel ?? (
+                                    <>
+                                        Trackfud · {t("app.tagline")}
+                                    </>
+                                )}
+                            </strong>
                         </span>
                     </Link>
-                    <span className="flex items-center gap-2">
-                        <Dropdown
-                            label="Language"
-                            value={i18n.language}
-                            options={[
-                                { value: "en", label: "English" },
-                                { value: "id", label: "Indonesia" },
-                                { value: "ms", label: "Melayu" },
-                            ]}
-                            onChange={(v) => {
-                                localStorage.setItem("tb:customer:lang", v);
-                                void i18n.changeLanguage(v);
-                            }}
-                        />
-                        <Link
-                            to={user ? "/profile" : "/login"}
-                            className="tb-avatar"
-                            aria-label={t("nav.profile")}
-                        >
-                            {user ? user.email.slice(0, 1).toUpperCase() : "?"}
-                        </Link>
-                    </span>
+                    {/* Account cluster is for signed-in users only. */}
+                    {user !== null && (
+                        <span className="flex items-center gap-2">
+                            <Dropdown
+                                label="Language"
+                                value={i18n.language}
+                                options={[
+                                    { value: "en", label: "English" },
+                                    { value: "id", label: "Indonesia" },
+                                    { value: "ms", label: "Melayu" },
+                                ]}
+                                onChange={(v) => {
+                                    localStorage.setItem("tb:customer:lang", v);
+                                    void i18n.changeLanguage(v);
+                                }}
+                            />
+                            <Link
+                                to="/profile"
+                                className="tb-avatar"
+                                aria-label={t("nav.profile")}
+                            >
+                                {user.email.slice(0, 1).toUpperCase()}
+                            </Link>
+                        </span>
+                    )}
                 </div>
                 <SyncBadge />
             </header>
             <main className="flex-1 px-4 pt-4 pb-28" key={loc.pathname}>
                 {children}
             </main>
-            <nav className="tb-nav" aria-label="Main">
-                <Link
-                    to="/"
-                    aria-current={loc.pathname === "/" ? "page" : undefined}
-                >
-                    {ICONS.home}
-                    {t("nav.home")}
-                </Link>
-                <Link
-                    to="/location"
-                    aria-current={
-                        loc.pathname === "/location" ? "page" : undefined
-                    }
-                >
-                    {ICONS.pin}
-                    {t("nav.location")}
-                </Link>
-                <Link
-                    to="/cart"
-                    aria-current={loc.pathname === "/cart" ? "page" : undefined}
-                >
-                    <span style={{ position: "relative", display: "flex" }}>
-                        {ICONS.cart}
-                        {cart > 0 && (
-                            <span className="tb-count" key={cart}>
-                                {cart}
-                            </span>
-                        )}
-                    </span>
-                    {t("nav.cart")}
-                </Link>
-                <Link
-                    to={user ? "/profile" : "/login"}
-                    aria-current={
-                        loc.pathname === "/profile" || loc.pathname === "/login"
-                            ? "page"
-                            : undefined
-                    }
-                >
-                    {ICONS.user}
-                    {t("nav.profile")}
-                </Link>
-            </nav>
+            {/* No navbar for guests. */}
+            {user !== null && (
+                <nav className="tb-nav" aria-label="Main">
+                    <Link
+                        to="/"
+                        aria-current={loc.pathname === "/" ? "page" : undefined}
+                    >
+                        {ICONS.home}
+                        {t("nav.home")}
+                    </Link>
+                    <Link
+                        to="/location"
+                        aria-current={
+                            loc.pathname === "/location" ? "page" : undefined
+                        }
+                    >
+                        {ICONS.pin}
+                        {t("nav.location")}
+                    </Link>
+                    <Link
+                        to="/cart"
+                        aria-current={loc.pathname === "/cart" ? "page" : undefined}
+                    >
+                        <span style={{ position: "relative", display: "flex" }}>
+                            {ICONS.cart}
+                            {cart > 0 && (
+                                <span className="tb-count" key={cart}>
+                                    {cart}
+                                </span>
+                            )}
+                        </span>
+                        {t("nav.cart")}
+                    </Link>
+                    <Link
+                        to="/profile"
+                        aria-current={
+                            loc.pathname === "/profile" ? "page" : undefined
+                        }
+                    >
+                        {ICONS.user}
+                        {t("nav.profile")}
+                    </Link>
+                </nav>
+            )}
         </div>
     );
 }
@@ -308,6 +314,7 @@ function AuthPage({ mode }: { mode: "login" | "signup" }) {
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
                                 autoComplete="name"
+                                placeholder={t("auth.namePh", { defaultValue: "e.g. Budi Santoso" })}
                             />
                         </Field>
                     )}
@@ -343,17 +350,6 @@ function AuthPage({ mode }: { mode: "login" | "signup" }) {
                               : t("auth.signup")}
                     </Button>
                 </form>
-                <div className="mt-3">
-                    <Button
-                        variant="ink"
-                        block
-                        onClick={() =>
-                            void submit("/auth/demo-login", { app: "customer" })
-                        }
-                    >
-                        {t("auth.demo")}
-                    </Button>
-                </div>
                 <p className="mt-4 text-sm text-center font-bold">
                     <Link
                         to={mode === "login" ? "/signup" : "/login"}
@@ -367,39 +363,30 @@ function AuthPage({ mode }: { mode: "login" | "signup" }) {
     );
 }
 
-const CATS = ["All", "Rice", "Wraps", "Drinks", "Fresh"];
-
-function customerLoc(): { lat: number; lng: number } {
-    try {
-        const saved = JSON.parse(
-            localStorage.getItem("tb:customer:loc") ?? "null",
-        ) as { lat: number; lng: number } | null;
-        if (typeof saved?.lat === "number" && typeof saved?.lng === "number")
-            return saved;
-    } catch {
-        /* fall through to default */
-    }
-    return { lat: -6.2088, lng: 106.8456 };
-}
-
 function Home() {
     const { t } = useTranslation();
-    const { lat, lng } = customerLoc();
+    const delivery = useDeliveryLocation();
+    const { lat, lng } = delivery.loc;
+    const hasPoint = delivery.source !== "fallback";
+    const pointLabel = delivery.activeAddress
+        ? delivery.activeAddress.address
+            ? `${delivery.activeAddress.label} · ${delivery.activeAddress.address}`
+            : delivery.activeAddress.label
+        : delivery.source === "device"
+          ? `${lat.toFixed(4)}, ${lng.toFixed(4)}`
+          : null;
     const [search, setSearch] = useState("");
-    const [cat, setCat] = useState("All");
-    const q = useQuery({
-        queryKey: ["restaurants", lat, lng],
-        queryFn: () =>
-            api<{ restaurants: Restaurant[] }>(
-                `/customer/restaurants?lat=${lat}&lng=${lng}`,
-            ),
-    });
+    // Empty string = "All". Otherwise the category label; the restaurant
+    // list is narrowed server-side (`GET /v1/customer/restaurants?category=`).
+    const [cat, setCat] = useState("");
+    const cats = useCustomerCategories();
+    const q = useRestaurants({ lat, lng, category: cat });
     const cartCount = useCart((s) => s.items.reduce((n, i) => n + i.qty, 0));
     const cartTotal = useCart((s) =>
         s.items.reduce((n, i) => n + i.priceMinor * i.qty, 0),
     );
     const cartCur = useCart((s) => s.items[0]?.currency ?? "IDR");
-    const shops = (q.data?.restaurants ?? []).filter((r) =>
+    const shops = (q.data ?? []).filter((r) =>
         r.name.toLowerCase().includes(search.toLowerCase()),
     );
     return (
@@ -456,30 +443,71 @@ function Home() {
                 <div
                     className="tb-chips mt-3"
                     role="tablist"
-                    aria-label="Categories"
+                    aria-label={t("home.categories")}
                 >
-                    {CATS.map((c) => (
+                    <button
+                        role="tab"
+                        aria-selected={cat === ""}
+                        className={`tb-chip${cat === "" ? " on" : ""}`}
+                        onClick={() => setCat("")}
+                    >
+                        {t("home.all")}
+                    </button>
+                    {cats.isLoading &&
+                        [0, 1, 2].map((i) => (
+                            <span
+                                key={i}
+                                className="tb-chip"
+                                aria-hidden="true"
+                                style={{ opacity: 0.5 }}
+                            >
+                                …
+                            </span>
+                        ))}
+                    {(cats.data ?? []).map((c) => (
                         <button
-                            key={c}
+                            key={c.label}
                             role="tab"
-                            aria-selected={cat === c}
-                            className={`tb-chip${cat === c ? " on" : ""}`}
-                            onClick={() => setCat(c)}
+                            aria-selected={cat === c.label}
+                            className={`tb-chip${cat === c.label ? " on" : ""}`}
+                            onClick={() =>
+                                setCat((cur) => (cur === c.label ? "" : c.label))
+                            }
+                            title={
+                                c.restaurant_count > 0
+                                    ? `${c.restaurant_count}`
+                                    : undefined
+                            }
                         >
-                            {c}
+                            {categoryLabel(c.name, i18n.language)}
                         </button>
                     ))}
                 </div>
+                {cats.isError && (
+                    <p className="tb-sub mt-2" role="note">
+                        {t("common.error")}:{" "}
+                        {(cats.error as Error).message}
+                    </p>
+                )}
                 <h2 className="tb-h2 mt-4">
-                    {t("nav.home")}{" "}
+                    <span>{t("nav.home")}</span>
                     <Link
                         to="/location"
                         className="text-sm font-bold underline"
                         style={{ color: "var(--tb-brand)" }}
                     >
-                        {t("home.setLocation")}
+                        {hasPoint ? t("home.change") : t("home.setLocation")}
                     </Link>
                 </h2>
+                {pointLabel ? (
+                    <p className="tb-sub mt-1" role="status">
+                        {t("home.deliveringTo", { label: pointLabel })}
+                    </p>
+                ) : (
+                    <p className="tb-sub mt-1" role="status">
+                        {t("home.noLocationSet")}
+                    </p>
+                )}
                 {q.isLoading && (
                     <div className="flex flex-col gap-3 mt-3">
                         <Skeleton height={210} />
@@ -500,6 +528,11 @@ function Home() {
                         </Button>
                     </div>
                 )}
+                {!q.isLoading && !q.isError && shops.length === 0 && (
+                    <p className="tb-sub mt-3" role="status">
+                        {t("home.noMatch")}
+                    </p>
+                )}
                 <List className="tb-grid-shops mt-3">
                     {shops.map((r, i) => (
                         <Item key={r.id} index={i}>
@@ -513,26 +546,18 @@ function Home() {
                                         alt=""
                                         loading="lazy"
                                     />
-                                    {r.availability === "runners_nearby" ? (
-                                        <span className="tb-float tb-float-live">
-                                            <span
-                                                style={{
-                                                    width: 12,
-                                                    height: 12,
-                                                    display: "inline-flex",
-                                                }}
-                                            >
-                                                {ICONS.bolt}
-                                            </span>
-                                            {t("home.runnersNearby")}
-                                        </span>
-                                    ) : (
-                                        <span className="tb-float tb-float-calm">
-                                            {t("home.staffOnly")}
-                                        </span>
-                                    )}
+                                    <AvailabilityBadge
+                                        availability={r.availability}
+                                        live_couriers_count={r.live_couriers_count}
+                                        live_modes={r.live_modes}
+                                        live_nearest_m={r.live_nearest_m}
+                                        variant="float"
+                                    />
                                     <span className="tb-float tb-float-rate">
-                                        <b>★</b> {ratingFor(r.id)}
+                                        <RestaurantRating
+                                            avg={r.rating_avg}
+                                            count={r.rating_count}
+                                        />
                                     </span>
                                     <span className="tb-float tb-float-dist">
                                         {formatDistance(
@@ -553,10 +578,7 @@ function Home() {
                         </Item>
                     ))}
                 </List>
-                <div className="tb-quote mt-4">
-                    <p>"You powered 2.4 km of Rina's run."</p>
-                    <small>Your impact, every order</small>
-                </div>
+                <ImpactQuote />
                 {cartCount > 0 && (
                     <Link
                         to="/cart"
@@ -583,29 +605,21 @@ function RestaurantPage() {
     const { t } = useTranslation();
     const { id } = useParams();
     const [showOriginal, setShowOriginal] = useState(false);
+    // Empty string = "All categories". Otherwise a menu category id; the
+    // item list is narrowed server-side (`?category_id=`).
+    const [menuCat, setMenuCat] = useState("");
     const add = useCart((s) => s.add);
     const setQty = useCart((s) => s.setQty);
     const cart = useCart((s) => s.items);
     const [added, setAdded] = useState<string | null>(null);
-    const { lat, lng } = customerLoc();
-    const info = useQuery({
-        queryKey: ["restaurant", id, lat, lng],
-        queryFn: () =>
-            api<RestaurantDetail>(
-                `/customer/restaurants/${id}?lat=${lat}&lng=${lng}`,
-            ),
-    });
-    const q = useQuery({
-        queryKey: ["menu", id],
-        queryFn: () =>
-            api<{ items: MenuItem[]; currency: string }>(
-                `/customer/restaurants/${id}/menu`,
-            ),
-    });
+    const delivery = useDeliveryLocation();
+    const { lat, lng } = delivery.loc;
+    const info = useRestaurant({ id, lat, lng });
+    const q = useMenu({ restaurantId: id, categoryId: menuCat });
     const lang = showOriginal ? "en" : i18n.language;
     const qtyOf = (dishId: string) =>
         cart.find((i) => i.id === dishId)?.qty ?? 0;
-    function onAdd(item: MenuItem) {
+    function onAdd(item: { id: string; name: Record<string, string>; price: { amount_minor: number; currency: string } }) {
         if (!id) return;
         add(
             {
@@ -646,7 +660,12 @@ function RestaurantPage() {
                         </p>
                         {info.data && (
                             <p className="tb-dish-tags">
-                                <Tag>★ {ratingFor(info.data.id)}</Tag>
+                                <Tag>
+                                    <RestaurantRating
+                                        avg={info.data.rating_avg}
+                                        count={info.data.rating_count}
+                                    />
+                                </Tag>
                                 {typeof info.data.distance_m ===
                                     "number" && (
                                     <Tag tone="dim">
@@ -656,14 +675,13 @@ function RestaurantPage() {
                                         )}
                                     </Tag>
                                 )}
-                                {info.data.availability ===
-                                "runners_nearby" ? (
-                                    <Tag>{t("home.runnersNearby")}</Tag>
-                                ) : (
-                                    <Tag tone="dim">
-                                        {t("home.staffOnly")}
-                                    </Tag>
-                                )}
+                                <AvailabilityBadge
+                                    availability={info.data.availability}
+                                    live_couriers_count={info.data.live_couriers_count}
+                                    live_modes={info.data.live_modes}
+                                    live_nearest_m={info.data.live_nearest_m}
+                                    variant="tag"
+                                />
                                 <Tag tone="dim">
                                     ~{info.data.prep_minutes} min prep
                                 </Tag>
@@ -679,6 +697,35 @@ function RestaurantPage() {
                     />{" "}
                     {t("menu.showOriginal")}
                 </label>
+                {(q.data?.categories ?? []).length > 0 && (
+                    <div
+                        className="tb-chips mt-3"
+                        role="tablist"
+                        aria-label={t("menu.categories")}
+                    >
+                        <button
+                            role="tab"
+                            aria-selected={menuCat === ""}
+                            className={`tb-chip${menuCat === "" ? " on" : ""}`}
+                            onClick={() => setMenuCat("")}
+                        >
+                            {t("menu.all")}
+                        </button>
+                        {(q.data?.categories ?? []).map((c) => (
+                            <button
+                                key={c.id}
+                                role="tab"
+                                aria-selected={menuCat === c.id}
+                                className={`tb-chip${menuCat === c.id ? " on" : ""}`}
+                                onClick={() =>
+                                    setMenuCat((cur) => (cur === c.id ? "" : c.id))
+                                }
+                            >
+                                {categoryLabel(c.name, i18n.language)}
+                            </button>
+                        ))}
+                    </div>
+                )}
                 {q.isLoading && (
                     <div className="flex flex-col gap-2 mt-3">
                         <Skeleton height={110} />
@@ -726,8 +773,7 @@ function RestaurantPage() {
                                             </Tag>
                                         )}
                                         <Tag tone="dim">
-                                            {item.size_class} ·{" "}
-                                            {item.spill_risk}
+                                            {item.size_class}
                                         </Tag>
                                     </p>
                                     <p className="tb-dish-foot">
@@ -907,6 +953,18 @@ function ProfilePage() {
         queryFn: getWallet,
         enabled: user !== null,
     });
+    // Conversion preview: when the wallet currency is not directly
+    // chargeable (e.g. IDR), Paddle charges USD and the wallet is credited
+    // the full amount. The server computes the converted minor units.
+    const walletCurrency = (wallet.data ?? [])[0]?.currency ?? "IDR";
+    const topupAmount = Number.parseInt(topup, 10);
+    const fxPreview = useQuery({
+        queryKey: ["fx-preview", walletCurrency, topup],
+        queryFn: () =>
+            getFxPreview({ from: walletCurrency, to: "USD", amountMinor: topupAmount }),
+        enabled:
+            user !== null && Number.isFinite(topupAmount) && topupAmount > 0,
+    });
     useEffect(() => {
         if (user)
             void wsTicket()
@@ -929,14 +987,19 @@ function ProfilePage() {
         }
         setTopupBusy(true);
         try {
+            // Top up in the wallet's currency when known (multi-currency
+            // wallets), else IDR. Minor units, never floats.
+            const currency = (wallet.data ?? [])[0]?.currency ?? "IDR";
             const result = await topUpWithPaddle({
                 amountMinor: amount,
-                currency: "IDR",
+                currency,
                 email: user?.email,
             });
             if (result.kind === "topup_credited") {
                 setMsg(t("topup.credited"));
             } else {
+                // Overlay closed but the Paddle webhook has not credited yet:
+                // the balance lands on confirm; refetch shows it when it does.
                 setMsg(t("topup.pending"));
             }
             void wallet.refetch();
@@ -1026,16 +1089,46 @@ function ProfilePage() {
                             </span>
                         </p>
                     ))}
-                    <div className="flex gap-2 mt-2">
+                    <form
+                        className="flex gap-2 mt-2"
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            void topUp();
+                        }}
+                    >
                         <Field label={t("topup.amount")}>
                             <input
                                 className="tb-input"
                                 inputMode="numeric"
+                                autoComplete="off"
+                                min={1}
                                 value={topup}
                                 onChange={(e) => setTopup(e.target.value)}
+                                placeholder={t("topup.amountPh", { defaultValue: "e.g. 50000" })}
+                                aria-label={t("topup.amount")}
+                                disabled={topupBusy}
                             />
                         </Field>
-                    </div>
+                    </form>
+                    <p className="tb-sub mt-1">
+                        {t("topup.amount")} · {((wallet.data ?? [])[0]?.currency ?? "IDR")}
+                    </p>
+                    {fxPreview.data && (
+                        <p className="tb-sub mt-1" role="note">
+                            {t("topup.fxNotice", {
+                                charge: formatMoney(
+                                    fxPreview.data.convertedMinor,
+                                    fxPreview.data.convertedCurrency,
+                                    i18n.language,
+                                ),
+                                credit: formatMoney(
+                                    topupAmount,
+                                    walletCurrency,
+                                    i18n.language,
+                                ),
+                            })}
+                        </p>
+                    )}
                     <div className="mt-2">
                         <Button
                             variant="ink"
@@ -1085,8 +1178,10 @@ function ProfilePage() {
                         variant="danger"
                         block
                         onClick={() => {
-                            setSession(null);
-                            location.href = "/customer/login";
+                            void logout().finally(() => {
+                                setSession(null);
+                                location.href = "/customer/login";
+                            });
                         }}
                     >
                         {t("auth.logout")}
@@ -1108,45 +1203,88 @@ function urlB64(base64: string): Uint8Array<ArrayBuffer> {
 export default function App() {
     return (
         <Routes>
-            <Route path="/" element={<Home />} />
+            <Route
+                path="/"
+                element={
+                    <RequireAuth>
+                        <Home />
+                    </RequireAuth>
+                }
+            />
             <Route path="/login" element={<AuthPage mode="login" />} />
             <Route path="/signup" element={<AuthPage mode="signup" />} />
-            <Route path="/restaurant/:id" element={<RestaurantPage />} />
-            <Route path="/location" element={<LocationPage />} />
-            <Route path="/cart" element={<CartPage />} />
+            <Route
+                path="/restaurant/:id"
+                element={
+                    <RequireAuth>
+                        <RestaurantPage />
+                    </RequireAuth>
+                }
+            />
+            <Route
+                path="/location"
+                element={
+                    <RequireAuth>
+                        <LocationPage />
+                    </RequireAuth>
+                }
+            />
+            <Route
+                path="/cart"
+                element={
+                    <RequireAuth>
+                        <CartPage />
+                    </RequireAuth>
+                }
+            />
             <Route
                 path="/checkout"
                 element={
-                    <Shell>
-                        <CheckoutPage />
-                    </Shell>
+                    <RequireAuth>
+                        <Shell>
+                            <CheckoutPage />
+                        </Shell>
+                    </RequireAuth>
                 }
             />
             <Route
                 path="/order/:id"
                 element={
-                    <Shell>
-                        <OrderPage />
-                    </Shell>
+                    <RequireAuth>
+                        <Shell>
+                            <OrderPage />
+                        </Shell>
+                    </RequireAuth>
                 }
             />
             <Route
                 path="/orders"
                 element={
-                    <Shell>
-                        <OrdersPage />
-                    </Shell>
+                    <RequireAuth>
+                        <Shell>
+                            <OrdersPage />
+                        </Shell>
+                    </RequireAuth>
                 }
             />
             <Route
                 path="/impact"
                 element={
-                    <Shell>
-                        <ImpactPage />
-                    </Shell>
+                    <RequireAuth>
+                        <Shell>
+                            <ImpactPage />
+                        </Shell>
+                    </RequireAuth>
                 }
             />
-            <Route path="/profile" element={<ProfilePage />} />
+            <Route
+                path="/profile"
+                element={
+                    <RequireAuth>
+                        <ProfilePage />
+                    </RequireAuth>
+                }
+            />
             <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
     );

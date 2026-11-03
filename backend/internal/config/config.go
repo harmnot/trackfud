@@ -2,11 +2,35 @@
 package config
 
 import (
+	"crypto/elliptic"
+	"crypto/subtle"
+	"encoding/base64"
+	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// Dispatch holds track-corridor matching + cascade + scoring (plan §6).
+type Dispatch struct {
+	RunnerCorridorM, BikerCorridorM       float64
+	RunnerMaxToPickupM, BikerMaxToPickupM float64
+	RunnerMaxTripM, BikerMaxTripM         float64
+	RunnerSizes, BikerSizes               []string
+	RunnerPlanKmh, BikerPlanKmh           float64
+	Circuity                              float64
+	OfferWindowS                          int
+	BroadcastWindowS                      int
+	CascadeSize                           int
+	SearchS                               int
+	StaffS                                int
+	RunnerMaxCarryS, BikerMaxCarryS       int
+	WFit, WFoodWait, WRating, WIdle       float64
+	HeadingPenalty                        float64
+	DetourRefreshM                        float64
+}
 
 // Config holds all runtime settings.
 type Config struct {
@@ -26,24 +50,9 @@ type Config struct {
 		DailyActiveCapMin  int `yaml:"daily_active_cap_min"`
 	} `yaml:"health"`
 	// Dispatch holds track-corridor matching + cascade + scoring (plan §6).
-	Dispatch struct {
-		RunnerCorridorM, BikerCorridorM       float64
-		RunnerMaxToPickupM, BikerMaxToPickupM float64
-		RunnerMaxTripM, BikerMaxTripM         float64
-		RunnerSizes, BikerSizes               []string
-		RunnerSpill, BikerSpill               []string
-		RunnerPlanKmh, BikerPlanKmh           float64
-		Circuity                              float64
-		OfferWindowS                          int
-		BroadcastWindowS                      int
-		CascadeSize                           int
-		SearchS                               int
-		StaffS                                int
-		RunnerMaxCarryS, BikerMaxCarryS       int
-		WFit, WFoodWait, WRating, WIdle       float64
-		HeadingPenalty                        float64
-		DetourRefreshM                        float64
-	} `yaml:"dispatch"`
+	// Named (not anonymous) so handlers can pass an effective copy
+	// overlaid with A9 CMS overrides.
+	Dispatch Dispatch `yaml:"dispatch"`
 	// Maps holds the Google Routes API key (server-side only, plan §9).
 	Maps struct {
 		APIKey string
@@ -102,9 +111,44 @@ type Config struct {
 	// PaddleWebhookSecret signs Paddle webhooks (HMAC-SHA256); the webhook
 	// refuses everything while it is empty.
 	PaddleWebhookSecret string `yaml:"-"`
-	UploadDir           string `yaml:"-"`
-	SMTPHost            string `yaml:"-"`
-	SMTPPort            string `yaml:"-"`
+	// IDEncKey seals courier ID numbers (AES-GCM). Env-only; when set it
+	// replaces the JWT-secret-derived key for new seals. Rotation-safe:
+	// sealed values are write-only (dup detection uses the hash), so old
+	// rows stay opaque and new rows use the new key with no migration.
+	IDEncKey  string `yaml:"-"`
+	UploadDir string `yaml:"-"`
+	SMTPHost  string `yaml:"-"`
+	SMTPPort  string `yaml:"-"`
+	// SMTPUser/Password/From wire Brevo SMTP (smtp-relay.brevo.com:587)
+	// in prod; empty user keeps the Mailpit/no-auth dev path. Env-only,
+	// never in config.yaml, never in API responses.
+	SMTPUser     string `yaml:"-"`
+	SMTPPassword string `yaml:"-"`
+	SMTPFrom     string `yaml:"-"`
+	// VAPID holds the Web Push key pair + contact. Env wins; when empty
+	// the server falls back to the DB-generated pair in app_secrets
+	// (dev continuity). Env-only.
+	VAPIDPublicKey  string `yaml:"-"`
+	VAPIDPrivateKey string `yaml:"-"`
+	VAPIDSubject    string `yaml:"-"`
+	// Paddle sandbox live wiring (plan §11). Webhook secret gates the
+	// webhook; API key + env + client token document the sandbox app.
+	// The public webhook URL is derived from Server.PublicBaseURL +
+	// /v1/webhooks/paddle (see PaddleWebhookURL). Env-only.
+	PaddleAPIKey      string `yaml:"-"`
+	PaddleEnv         string `yaml:"-"`
+	PaddleClientToken string `yaml:"-"`
+	// R2 holds Cloudflare R2 (S3-compatible) wiring. When Endpoint is
+	// empty the server uses the local UploadDir fallback (dev/tests);
+	// when set, presign serves R2 presigned URLs: public bucket for
+	// menus/avatars, private bucket for IDs/selfie/proof/agreements
+	// with 5-min expiry. Env-only, never in API responses.
+	R2Endpoint      string `yaml:"-"`
+	R2AccessKey     string `yaml:"-"`
+	R2SecretKey     string `yaml:"-"`
+	R2PublicBucket  string `yaml:"-"`
+	R2PrivateBucket string `yaml:"-"`
+	R2PublicBaseURL string `yaml:"-"`
 }
 
 // Load reads config.yaml (if present) then applies env overrides.
@@ -149,8 +193,6 @@ func Load() (*Config, error) {
 	c.Dispatch.BikerMaxTripM = 7000
 	c.Dispatch.RunnerSizes = []string{"S", "M"}
 	c.Dispatch.BikerSizes = []string{"S", "M", "L"}
-	c.Dispatch.RunnerSpill = []string{"low"}
-	c.Dispatch.BikerSpill = []string{"low", "medium"}
 	c.Dispatch.RunnerPlanKmh = 9
 	c.Dispatch.BikerPlanKmh = 16
 	c.Dispatch.Circuity = 1.3
@@ -235,8 +277,6 @@ func Load() (*Config, error) {
 				BikeTrip   float64  `yaml:"biker_max_trip_m"`
 				RunSizes   []string `yaml:"runner_sizes"`
 				BikeSizes  []string `yaml:"biker_sizes"`
-				RunSpill   []string `yaml:"runner_spill"`
-				BikeSpill  []string `yaml:"biker_spill"`
 				RunPlan    float64  `yaml:"runner_plan_kmh"`
 				BikePlan   float64  `yaml:"biker_plan_kmh"`
 				Circuity   float64  `yaml:"circuity"`
@@ -390,12 +430,6 @@ func Load() (*Config, error) {
 		if len(d.BikeSizes) > 0 {
 			c.Dispatch.BikerSizes = d.BikeSizes
 		}
-		if len(d.RunSpill) > 0 {
-			c.Dispatch.RunnerSpill = d.RunSpill
-		}
-		if len(d.BikeSpill) > 0 {
-			c.Dispatch.BikerSpill = d.BikeSpill
-		}
 		if d.RunPlan > 0 {
 			c.Dispatch.RunnerPlanKmh = d.RunPlan
 		}
@@ -451,10 +485,32 @@ func Load() (*Config, error) {
 	}
 	c.DatabaseURL = env("DATABASE_URL", "postgres://Trackfud:Trackfud@localhost:5432/Trackfud?sslmode=disable")
 	c.JWTSecret = env("TF_JWT_SECRET", "dev-only-change-me-32chars-minimum!!")
+	if len(c.JWTSecret) < 32 {
+		return nil, fmt.Errorf("TF_JWT_SECRET must be at least 32 chars")
+	}
+	c.IDEncKey = env("TF_IDENC_KEY", "")
 	c.PaddleWebhookSecret = env("TF_PADDLE_WEBHOOK_SECRET", "")
+	c.PaddleAPIKey = env("TF_PADDLE_API_KEY", "")
+	c.PaddleEnv = env("TF_PADDLE_ENV", "sandbox")
+	c.PaddleClientToken = env("TF_PADDLE_CLIENT_TOKEN", "")
 	c.UploadDir = env("TF_UPLOAD_DIR", "data/uploads")
 	c.SMTPHost = env("TF_SMTP_HOST", "")
 	c.SMTPPort = env("TF_SMTP_PORT", "1025")
+	c.SMTPUser = env("TF_SMTP_USER", "")
+	c.SMTPPassword = env("TF_SMTP_PASSWORD", "")
+	c.SMTPFrom = env("TF_SMTP_FROM", "no-reply@Trackfud.local")
+	c.VAPIDPublicKey = env("TF_VAPID_PUBLIC_KEY", "")
+	c.VAPIDPrivateKey = env("TF_VAPID_PRIVATE_KEY", "")
+	c.VAPIDSubject = env("TF_VAPID_SUBJECT", "mailto:demo@Trackfud.local")
+	if err := checkVAPIDPair(c.VAPIDPublicKey, c.VAPIDPrivateKey); err != nil {
+		return nil, err
+	}
+	c.R2Endpoint = env("TF_R2_ENDPOINT", "")
+	c.R2AccessKey = env("TF_R2_ACCESS_KEY", "")
+	c.R2SecretKey = env("TF_R2_SECRET_KEY", "")
+	c.R2PublicBucket = env("TF_R2_PUBLIC_BUCKET", "")
+	c.R2PrivateBucket = env("TF_R2_PRIVATE_BUCKET", "")
+	c.R2PublicBaseURL = env("TF_R2_PUBLIC_URL", "")
 	c.Maps.APIKey = env("TF_GOOGLE_MAPS_KEY", "")
 	c.AI.MetaAPIKey = env("TF_META_API_KEY", "")
 	c.AI.MetaBaseURL = env("TF_META_BASE_URL", c.AI.MetaBaseURL)
@@ -484,8 +540,22 @@ func Load() (*Config, error) {
 	if v := os.Getenv("TF_ADDR"); v != "" {
 		c.Server.Addr = v
 	}
-	if v := os.Getenv("TF_DEMO_MODE"); v != "" {
+	if v := os.Getenv("TF_PUBLIC_BASE_URL"); v != "" {
+		c.Server.PublicBaseURL = v
+	}
+	if c.Server.PublicBaseURL == "" {
+		c.Server.PublicBaseURL = "http://localhost:8000"
+	}
+	// APP_DEVELOPMENT is the canonical environment switch: "production"
+	// means production mode (no demo shortcuts — no demo-login, no
+	// dev simulate-paid). local/development/demo mean local/demo mode
+	// for now. Precedence: explicit TF_DEMO_MODE wins when set (compat
+	// with existing deployments), then an explicit APP_DEVELOPMENT,
+	// otherwise the config.yaml value stands.
+	if v, ok := os.LookupEnv("TF_DEMO_MODE"); ok && strings.TrimSpace(v) != "" {
 		c.Server.DemoMode, _ = strconv.ParseBool(v)
+	} else if dev := strings.TrimSpace(os.Getenv("APP_DEVELOPMENT")); dev != "" {
+		c.Server.DemoMode = !strings.EqualFold(dev, "production")
 	}
 	return c, nil
 }
@@ -495,4 +565,61 @@ func env(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// checkVAPIDPair fails fast on a misconfigured Web Push pair so a typo'd or
+// hand-invented key breaks the boot log instead of silently breaking push
+// delivery. Empty pair is allowed: the server falls back to the DB-generated
+// dev pair in app_secrets. A set pair must be one matched P-256 pair from a
+// single `web-push generate-vapid-keys` run (base64url, no padding:
+// 43-char private = 32 bytes, 87-char public = 65-byte uncompressed point).
+func checkVAPIDPair(pub, priv string) error {
+	if pub == "" && priv == "" {
+		return nil
+	}
+	if pub == "" || priv == "" {
+		return fmt.Errorf("invalid VAPID config: set both TF_VAPID_PUBLIC_KEY and TF_VAPID_PRIVATE_KEY, or neither (empty falls back to the DB dev pair)")
+	}
+	privBytes, err := base64.RawURLEncoding.DecodeString(priv)
+	if err != nil || len(privBytes) != 32 {
+		return fmt.Errorf("invalid TF_VAPID_PRIVATE_KEY: must be the 43-char base64url private key from generate-vapid-keys (got %d chars) — never hand-type it", len(priv))
+	}
+	pubBytes, err := base64.RawURLEncoding.DecodeString(pub)
+	if err != nil || len(pubBytes) != 65 || pubBytes[0] != 0x04 {
+		return fmt.Errorf("invalid TF_VAPID_PUBLIC_KEY: must be the 87-char base64url public key from generate-vapid-keys (got %d chars) — never hand-type it", len(pub))
+	}
+	x, y := elliptic.P256().ScalarBaseMult(privBytes)
+	derived := elliptic.Marshal(elliptic.P256(), x, y)
+	if subtle.ConstantTimeCompare(derived, pubBytes) != 1 {
+		return fmt.Errorf("invalid VAPID pair: TF_VAPID_PRIVATE_KEY does not derive TF_VAPID_PUBLIC_KEY — paste both lines from the SAME generate-vapid-keys output")
+	}
+	return nil
+}
+
+// R2Configured reports whether live R2 presigning is possible: endpoint +
+// credentials + both buckets must be present. Otherwise callers use the
+// local UploadDir fallback (dev/tests).
+func (c *Config) R2Configured() bool {
+	return c.R2Endpoint != "" && c.R2AccessKey != "" && c.R2SecretKey != "" &&
+		c.R2PublicBucket != "" && c.R2PrivateBucket != ""
+}
+
+// R2BucketFor maps the presign bucket contract to the live bucket name:
+// "private" (IDs/selfie/proof/agreements) goes to the private bucket,
+// everything else (menus/avatars) to the public bucket.
+func (c *Config) R2BucketFor(bucket string) string {
+	if bucket == "private" {
+		return c.R2PrivateBucket
+	}
+	return c.R2PublicBucket
+}
+
+// PaddleWebhookURL is the public URL Paddle calls: base + fixed path.
+// Configure TF_PUBLIC_BASE_URL to the gateway origin in prod.
+func (c *Config) PaddleWebhookURL() string {
+	base := strings.TrimRight(c.Server.PublicBaseURL, "/")
+	if base == "" {
+		base = "http://localhost:8000"
+	}
+	return base + "/api/v1/webhooks/paddle"
 }

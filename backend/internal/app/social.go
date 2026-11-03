@@ -1,92 +1,22 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"Trackfud/internal/ai"
 	"Trackfud/internal/order"
-
-	"github.com/jackc/pgx/v5"
 )
 
-// ---------- Social B4: no-courier choices, ratings, cheers, chat, impact ----------
+// ---------- Social B4: ratings, cheers, chat, impact ----------
 //
 // These close the R2/B4 gap the frontends queue against. Each stays tight:
 // one table, one guarded write, WS + push on the side. Translation and
-// moderation of chat arrive with the B6 AI jobs.
-
-// deliveryChoice implements the three no-courier options: wait 5 more
-// minutes (fresh search), switch to pickup, or cancel with a full refund.
-func (s *Server) deliveryChoice(w http.ResponseWriter, r *http.Request) {
-	c := claims(r)
-	o, err := s.loadOrder(r.Context(), r.PathValue("id"))
-	if err != nil {
-		problem(w, 404, "Not found", "order not found")
-		return
-	}
-	if o.CustomerID != c.Sub {
-		problem(w, 403, "Forbidden", "not your order")
-		return
-	}
-	var b struct {
-		Choice string `json:"choice"`
-	}
-	if !decode(w, r, &b) {
-		return
-	}
-	d, err := s.loadDeliveryByOrder(r.Context(), o.ID)
-	if err != nil || d.Status != DeliveryNoCourier {
-		problem(w, 409, "Conflict", "courier choices are only available when no courier was found")
-		return
-	}
-	switch b.Choice {
-	case "wait_more":
-		_, _ = s.db.Exec(r.Context(), `UPDATE deliveries SET status='searching', search_started_at=now() WHERE id=$1`, d.ID)
-		s.enqueueNow("search_timeout", fmt.Sprintf(`{"delivery_id":%q}`, d.ID),
-			time.Now().Add(time.Duration(s.cfg.Dispatch.SearchS)*time.Second))
-		s.enqueueNow("dispatch_run", fmt.Sprintf(`{"delivery_id":%q}`, d.ID), time.Now())
-		s.runCascade(r.Context(), d.ID)
-		updated, _ := s.loadDeliveryByOrder(r.Context(), o.ID)
-		writeJSON(w, 200, map[string]any{"choice": "wait_more", "delivery_status": updated.Status})
-	case "pickup":
-		_, _ = s.db.Exec(r.Context(), `UPDATE deliveries SET status='cancelled', cancel_note='customer_pickup' WHERE id=$1`, d.ID)
-		var ownerID string
-		_ = s.db.QueryRow(r.Context(), `SELECT owner_id FROM merchants WHERE id=$1`, o.MerchantID).Scan(&ownerID)
-		if ownerID != "" {
-			s.queuePush(ownerID, "Customer switched to pickup",
-				fmt.Sprintf("Order %s: the customer will show the pickup code at the counter.", o.Code))
-		}
-		writeJSON(w, 200, map[string]any{"choice": "pickup", "delivery_status": "cancelled",
-			"note": "show the pickup code at the counter; the kitchen keeps cooking"})
-	case "cancel":
-		_, _, _, err := s.transitionOrder(r.Context(), o.ID, order.StatusAccepted, order.StatusCancelled,
-			"customer", c.Sub, "cancelled: no courier and no staff", func(ctx context.Context, tx pgx.Tx) error {
-				if _, err := tx.Exec(ctx, `UPDATE orders SET payment_status='refunded',
-					cancel_reason='no courier available' WHERE id=$1`, o.ID); err != nil {
-					return err
-				}
-				if _, err := tx.Exec(ctx, `UPDATE deliveries SET status='cancelled',
-					cancel_note='customer_cancel_no_courier' WHERE id=$1`, d.ID); err != nil {
-					return err
-				}
-				legs, key := refundLegsFor(o)
-				markCardPaymentRefunded(ctx, tx, o.ID)
-				return postEntry(ctx, tx, "order_refund", key, "order", o.ID, legs)
-			})
-		if err != nil {
-			problem(w, 409, "Conflict", "order changed; refresh and try again")
-			return
-		}
-		updated, _ := s.loadOrder(r.Context(), o.ID)
-		writeJSON(w, 200, map[string]any{"order": s.orderView(r.Context(), updated, "customer"), "refunded": true})
-	default:
-		problem(w, 400, "Validation failed", "choice must be wait_more, pickup, or cancel")
-	}
-}
+// moderation of chat arrive with the B6 AI jobs. The no-courier choices
+// live in no_courier.go.
 
 // rateOrder records the separate courier + restaurant ratings (one per
 // order). Courier stars feed the Bayesian average; tags are free-form.
@@ -236,7 +166,12 @@ func (s *Server) cheerOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.queuePush(*d.CourierID, "A customer cheered you on", msg)
-	cheerB, _ := json.Marshal(map[string]any{"type": "cheer", "order_id": o.ID, "message": msg})
+	// The Courier PWA socket types `{type:"cheer", text}` (legacy frames only
+	// carried `message`); send both so old and new clients speak the cheer
+	// aloud in Run Mode. `from` stays a role label — customer names are never
+	// exposed to couriers.
+	cheerB, _ := json.Marshal(map[string]any{"type": "cheer", "order_id": o.ID,
+		"message": msg, "text": msg, "from": "customer", "lang": "en"})
 	s.hub.Broadcast(*d.CourierID, string(cheerB))
 	writeJSON(w, 201, map[string]any{"sent": true})
 }
@@ -307,8 +242,15 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request, o orderRow,
 	}
 	if other != senderID {
 		s.queuePush(other, "New message", body)
+		// The Courier PWA socket types `{type:"chat.message", text, lang}`
+		// (legacy frames only carried `body`); send both shapes so old and
+		// new clients render the thread and the courier voice pipeline hears it.
+		lang := strings.TrimSpace(b.Lang)
+		if lang == "" {
+			lang = ai.DetectLang(body)
+		}
 		msgB, _ := json.Marshal(map[string]any{"type": "chat.message", "order_id": o.ID,
-			"message_id": id, "sender": senderType, "body": body})
+			"message_id": id, "sender": senderType, "body": body, "text": body, "lang": lang})
 		s.hub.Broadcast(other, string(msgB))
 	}
 	writeJSON(w, 201, map[string]any{"id": id, "sender": senderType, "body": body,
@@ -344,7 +286,7 @@ func (s *Server) listCourierMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, orderID string) {
-	rows, err := s.db.Query(r.Context(), `SELECT id, sender_type, body, lang, translated_body, created_at
+	rows, err := s.db.Query(r.Context(), `SELECT id, sender_type, body, lang, translated_body, translated_live, created_at
 		FROM order_messages WHERE order_id=$1 ORDER BY created_at LIMIT 100`, orderID)
 	if err != nil {
 		problem(w, 500, "Server error", err.Error())
@@ -354,8 +296,9 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, orderID st
 	out := []map[string]any{}
 	for rows.Next() {
 		var id, sender, body, lang, translated string
+		var translatedLive bool
 		var at time.Time
-		if err := rows.Scan(&id, &sender, &body, &lang, &translated, &at); err != nil {
+		if err := rows.Scan(&id, &sender, &body, &lang, &translated, &translatedLive, &at); err != nil {
 			continue
 		}
 		m := map[string]any{"id": id, "sender": sender, "body": body,
@@ -365,6 +308,7 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, orderID st
 		}
 		if translated != "" {
 			m["translated_body"] = translated
+			m["translated_live"] = translatedLive
 		}
 		out = append(out, m)
 	}
@@ -381,10 +325,10 @@ func (s *Server) customerImpact(w http.ResponseWriter, r *http.Request) {
 	_ = s.db.QueryRow(r.Context(), `SELECT count(*), count(DISTINCT d.courier_id),
 		COALESCE(sum(d.carried_distance_m),0), COALESCE(sum(d.carried_active_s),0)
 		FROM deliveries d JOIN orders o ON o.id=d.order_id
-		WHERE o.customer_id=$1 AND d.status='delivered'`, c.Sub).Scan(&orders, &couriers, &distM, &activeS)
+		WHERE o.customer_id=$1 AND d.status='delivered' AND d.type='workout'`, c.Sub).Scan(&orders, &couriers, &distM, &activeS)
 	rows, err := s.db.Query(r.Context(), `SELECT o.code, u.name, d.carried_distance_m, d.carried_active_s, d.delivered_at
 		FROM deliveries d JOIN orders o ON o.id=d.order_id LEFT JOIN users u ON u.id=d.courier_id
-		WHERE o.customer_id=$1 AND d.status='delivered' ORDER BY d.delivered_at DESC LIMIT 20`, c.Sub)
+		WHERE o.customer_id=$1 AND d.status='delivered' AND d.type='workout' ORDER BY d.delivered_at DESC LIMIT 20`, c.Sub)
 	recent := []map[string]any{}
 	if err == nil {
 		defer rows.Close()

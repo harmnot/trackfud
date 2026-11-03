@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { ApiError } from '../../lib/api';
 import { logger } from '../../lib/logger';
-import { Badge, Button, Field, Item, List, Note, Page, Switch } from '../../components/ui';
+import { Badge, Button, Check, Field, FileUpload, Item, List, Note, Page, Select, Switch, TextInput } from '../../components/ui';
 import { createItem, createServerImportJob, listCategories, uploadMenuFile } from './api';
 import {
   draftReady,
@@ -25,14 +25,12 @@ import { shrinkPhoto } from './image';
 import { useMerchant } from './useMerchant';
 import {
   SIZE_OPTIONS,
-  SPILL_OPTIONS,
   SUPPORTED_LANGS,
   formatMinor,
   parseMajorToMinor,
   type ImportDraft,
   type ImportJob,
   type SizeClass,
-  type SpillRisk,
 } from './types';
 
 function priceTextOf(draft: ImportDraft, currency: string): string {
@@ -47,6 +45,7 @@ export default function ImportPage(): React.ReactNode {
   const cats = useQuery({ queryKey: ['menu-cats'], queryFn: listCategories });
   const [job, setJob] = useState<ImportJob | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pickedName, setPickedName] = useState<string | null>(null);
   const [err, setErr] = useState('');
   const abortRef = useRef<AbortController | null>(null);
 
@@ -80,6 +79,7 @@ export default function ImportPage(): React.ReactNode {
   async function onFile(file: File): Promise<void> {
     setErr('');
     setBusy(true);
+    setPickedName(file.name);
     try {
       const shrunk = await shrinkPhoto({ file });
       const uploaded = await uploadMenuFile({ blob: shrunk.blob, contentType: shrunk.contentType });
@@ -94,6 +94,7 @@ export default function ImportPage(): React.ReactNode {
       logger.warn('menu import upload failed', { err: m });
     } finally {
       setBusy(false);
+      setPickedName(null);
     }
   }
 
@@ -121,7 +122,6 @@ export default function ImportPage(): React.ReactNode {
             description: draft.description,
             price_minor: draft.price_minor,
             size_class: draft.size_class,
-            spill_risk: draft.spill_risk,
             travels_well: draft.travels_well,
             photo_url: draft.photo_url,
             available: true,
@@ -149,19 +149,17 @@ export default function ImportPage(): React.ReactNode {
       <p className="tb-sub">{t('import.sub')}</p>
 
       <section className="tb-card mt-3 flex flex-col gap-3" aria-label={t('import.upload')}>
-        <Field label={t('import.photo')}>
-          <input
-            className="tb-input"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            disabled={busy}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void onFile(f);
-              e.target.value = '';
-            }}
-          />
-        </Field>
+        <p className="tb-label">{t('import.photo')}</p>
+        <FileUpload
+          title={t('import.dropTitle')}
+          hint={t('import.dropHint')}
+          accept="image/jpeg,image/png,image/webp"
+          fileName={pickedName}
+          busy={busy}
+          done={false}
+          onFile={(f) => void onFile(f)}
+          onClear={() => setPickedName(null)}
+        />
         <p className="tb-sub">{t('import.shrink')}</p>
         {busy && <div className="tb-skel" style={{ height: 64 }} role="status" aria-label={t('common.loading')} />}
       </section>
@@ -188,54 +186,45 @@ export default function ImportPage(): React.ReactNode {
                         <span className="flex-1 flex flex-col gap-2">
                           {SUPPORTED_LANGS.map((l) => (
                             <Field key={l} label={`${t('menu.name')} (${l})`}>
-                              <input
-                                className={`tb-input${!draft.confident && !(draft.name[l]?.trim()) ? ' tb-input-low' : ''}`}
+                              <TextInput
+                                className={!draft.confident && !(draft.name[l]?.trim()) ? 'tb-input-low' : ''}
                                 value={draft.name[l] ?? ''}
-                                onChange={(e) => editDraft({ ...draft, name: { ...draft.name, [l]: e.target.value } })}
+                                placeholder={t('menu.namePh', { defaultValue: 'e.g. Nasi Goreng' })}
+                                onChange={(v) => editDraft({ ...draft, name: { ...draft.name, [l]: v } })}
                               />
                             </Field>
                           ))}
                           <span className="grid grid-cols-2 gap-2">
                             <Field label={`${t('menu.price')} (${currency})`}>
-                              <input
-                                className={`tb-input${draft.needs_price ? ' tb-input-low' : ''}`}
+                              <TextInput
+                                className={draft.needs_price ? 'tb-input-low' : ''}
                                 inputMode="decimal"
                                 value={priceTextOf(draft, currency)}
                                 placeholder={t('import.typePrice')}
-                                onChange={(e) => setPrice(draft, e.target.value)}
+                                onChange={(v) => setPrice(draft, v)}
                               />
                             </Field>
                             <Field label={t('menu.cat')}>
-                              <select
-                                className="tb-input"
+                              <Select
                                 value={draft.category_id ?? ''}
-                                onChange={(e) => editDraft({ ...draft, category_id: e.target.value || null })}
-                              >
-                                <option value="">{t('menu.noCat')}</option>
-                                {(cats.data ?? []).map((c) => (
-                                  <option key={c.id} value={c.id}>{c.name[lang] ?? c.name.en ?? ''}</option>
-                                ))}
-                              </select>
+                                ariaLabel={t('menu.cat')}
+                                onChange={(v) => editDraft({ ...draft, category_id: v || null })}
+                                options={[
+                                  { value: '', label: t('menu.noCat') },
+                                  ...(cats.data ?? []).map((c) => ({ value: c.id, label: c.name[lang] ?? c.name.en ?? '' })),
+                                ]}
+                              />
                             </Field>
                           </span>
-                          <span className="grid grid-cols-2 gap-2">
+                          <span>
                             <Field label={t('menu.size')}>
-                              <select
-                                className={`tb-input${!draft.confident ? ' tb-input-low' : ''}`}
+                              <Select
+                                className={!draft.confident ? 'tb-input-low' : ''}
                                 value={draft.size_class}
-                                onChange={(e) => editDraft({ ...draft, size_class: e.target.value as SizeClass, confident: false })}
-                              >
-                                {SIZE_OPTIONS.map((s) => (<option key={s} value={s}>{s}</option>))}
-                              </select>
-                            </Field>
-                            <Field label={t('menu.spill')}>
-                              <select
-                                className={`tb-input${!draft.confident ? ' tb-input-low' : ''}`}
-                                value={draft.spill_risk}
-                                onChange={(e) => editDraft({ ...draft, spill_risk: e.target.value as SpillRisk, confident: false })}
-                              >
-                                {SPILL_OPTIONS.map((s) => (<option key={s} value={s}>{t(`menu.spill_${s}`)}</option>))}
-                              </select>
+                                ariaLabel={t('menu.size')}
+                                onChange={(v) => editDraft({ ...draft, size_class: v as SizeClass, confident: false })}
+                                options={SIZE_OPTIONS.map((s) => ({ value: s, label: s }))}
+                              />
                             </Field>
                           </span>
                           <Switch
@@ -266,14 +255,11 @@ export default function ImportPage(): React.ReactNode {
                   {t('import.addRow')}
                 </Button>
               </div>
-              <label className="flex gap-2 items-start font-bold text-sm mt-3">
-                <input
-                  type="checkbox"
-                  checked={job.prices_checked}
-                  onChange={(e) => setJob(withPricesChecked({ job, checked: e.target.checked }))}
-                />
-                {t('import.checked')}
-              </label>
+              <Check
+                checked={job.prices_checked}
+                onChange={(v) => setJob(withPricesChecked({ job, checked: v }))}
+                label={t('import.checked')}
+              />
               <div className="mt-2">
                 <Button block disabled={!jobReady(job) || busy} onClick={() => void publish()}>
                   {t('import.publish')}

@@ -51,6 +51,15 @@ export type TrackRow = {
   createdAt: number;
   points: Array<{ x: number; y: number }>;
   estimateM: number;
+  /** Map placement when the track was drawn against a map anchor. */
+  geo?: {
+    center: { lat: number; lng: number };
+    spanM: number;
+    aspect: number;
+    path: Array<{ lat: number; lng: number }>;
+    snapped: Array<{ lat: number; lng: number }> | null;
+    travelMode: 'walking' | 'bicycling';
+  };
 };
 
 /** One chat line, see chatStore (customer names never stored). */
@@ -116,6 +125,16 @@ export async function unsentPoints(args: { sessionId: string; limit: number }): 
 /** Mark points acknowledged by the server so they are never resent. */
 export async function markSent(uuids: string[]): Promise<void> {
   await db.points.where('uuid').anyOf(uuids).modify({ sent: 1 });
+}
+
+/**
+ * Re-tag buffered points when a boot resume opens a fresh server session
+ * (the old row ended while the page was closed). Same run, same real
+ * timestamps — just a new session id so the backlog isn't orphaned.
+ */
+export async function retargetPoints(args: { from: string; to: string }): Promise<number> {
+  if (args.from === args.to) return 0;
+  return db.points.where({ sessionId: args.from }).modify({ sessionId: args.to });
 }
 
 /** Drop acknowledged points older than 7 days (raw GPS is short-lived). */

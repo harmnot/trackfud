@@ -150,16 +150,66 @@ export async function fetchOrder(args: { id: string }): Promise<OrderDetail> {
   };
 }
 
-/** List the customer's recent orders (newest first). */
-export async function listOrders(): Promise<Order[]> {
-  const res = await api<{ orders: unknown }>('/customer/orders');
-  if (!Array.isArray(res.orders)) return [];
-  const out: Order[] = [];
-  for (const raw of res.orders) {
-    const order = parseOrder(raw);
-    if (order) out.push(order);
+/** Scroll page of the customer's order history: rows plus the server envelope. */
+export type OrderListPage = {
+  orders: Order[];
+  page: number;
+  perPage: number;
+  total: number;
+  hasMore: boolean;
+};
+
+/** Scroll page of wallet top-ups: rows plus the server envelope. */
+export type TopupPage = {
+  topups: Payment[];
+  page: number;
+  perPage: number;
+  total: number;
+  hasMore: boolean;
+};
+
+function numOf(raw: unknown, fallback: number): number {
+  return typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : fallback;
+}
+
+function pageParams(params: URLSearchParams, args: { page: number; perPage: number }): void {
+  params.set('page', String(args.page));
+  params.set('per_page', String(args.perPage));
+}
+
+/** List the customer's recent orders, scroll-paginated newest first. */
+export async function listOrders(args: {
+  page: number;
+  perPage: number;
+  status?: OrderStatus;
+  q?: string;
+}): Promise<OrderListPage> {
+  const params = new URLSearchParams();
+  if (args.status) params.set('status', args.status);
+  const q = (args.q ?? '').trim();
+  if (q !== '') params.set('q', q);
+  pageParams(params, args);
+  const res = await api<{
+    orders: unknown;
+    page: unknown;
+    per_page: unknown;
+    total: unknown;
+    has_more: unknown;
+  }>(`/customer/orders?${params.toString()}`);
+  const orders: Order[] = [];
+  if (Array.isArray(res.orders)) {
+    for (const raw of res.orders) {
+      const order = parseOrder(raw);
+      if (order) orders.push(order);
+    }
   }
-  return out;
+  return {
+    orders,
+    page: numOf(res.page, args.page),
+    perPage: numOf(res.per_page, args.perPage),
+    total: numOf(res.total, orders.length),
+    hasMore: res.has_more === true,
+  };
 }
 
 /** Cancel before merchant accept. Returns the updated status + refund flag. */
@@ -202,16 +252,63 @@ export async function createTopup(args: {
   return toPayment(res.payment, 'createTopup');
 }
 
-/** Recent top-ups, newest first. */
-export async function listTopups(): Promise<Payment[]> {
-  const res = await api<{ topups: unknown }>('/customer/wallet/topups');
-  if (!Array.isArray(res.topups)) return [];
-  const out: Payment[] = [];
-  for (const raw of res.topups) {
-    const payment = parsePayment(raw);
-    if (payment) out.push(payment);
+/** Recent top-ups, scroll-paginated newest first. */
+export async function listTopups(args: { page: number; perPage: number }): Promise<TopupPage> {
+  const params = new URLSearchParams();
+  pageParams(params, args);
+  const res = await api<{
+    topups: unknown;
+    page: unknown;
+    per_page: unknown;
+    total: unknown;
+    has_more: unknown;
+  }>(`/customer/wallet/topups?${params.toString()}`);
+  const topups: Payment[] = [];
+  if (Array.isArray(res.topups)) {
+    for (const raw of res.topups) {
+      const payment = parsePayment(raw);
+      if (payment) topups.push(payment);
+    }
   }
-  return out;
+  return {
+    topups,
+    page: numOf(res.page, args.page),
+    perPage: numOf(res.per_page, args.perPage),
+    total: numOf(res.total, topups.length),
+    hasMore: res.has_more === true,
+  };
+}
+
+/** FX conversion preview for the top-up form: what Paddle will charge when
+ * the wallet currency is not directly chargeable (e.g. IDR → USD). The
+ * server computes the converted minor units — the PWA never duplicates the
+ * minor-unit scales. Returns null when the pair has no rate. */
+export async function getFxPreview(args: {
+  from: string;
+  to: string;
+  amountMinor: number;
+}): Promise<{ rate: number; convertedMinor: number; convertedCurrency: string } | null> {
+  const params = new URLSearchParams({
+    from: args.from,
+    to: args.to,
+    amount: String(args.amountMinor),
+  });
+  try {
+    const res = await api<{
+      rate: unknown;
+      paddle_supported_from: unknown;
+      paddle_supported_to: unknown;
+      converted: unknown;
+    }>(`/fx/rate?${params.toString()}`);
+    if (typeof res.rate !== 'number') return null;
+    if (res.paddle_supported_from !== false || res.paddle_supported_to !== true) return null;
+    const c = res.converted as Record<string, unknown> | null;
+    if (!c || typeof c['converted_minor'] !== 'number' || typeof c['converted_currency'] !== 'string') return null;
+    return { rate: res.rate, convertedMinor: c['converted_minor'] as number, convertedCurrency: c['converted_currency'] as string };
+  } catch (err) {
+    logger.warn('fx preview unavailable', { err: err instanceof Error ? err.message : 'unknown' });
+    return null;
+  }
 }
 
 /** Demo-mode confirm for a pending payment: runs the same claim-and-apply
@@ -223,4 +320,28 @@ export async function confirmPaymentDemo(args: { paymentId: string }): Promise<{
   const payment = toPayment(res.payment, 'confirmPaymentDemo');
   const order = res.order === undefined ? null : parseOrder(res.order);
   return { payment, order };
+}
+
+/** Mint a Paddle transaction for a pending payment (preferred card path).
+ * The PWA opens the overlay with the returned transaction id. Without a
+ * server Paddle API key this is 503 — callers fall back to demo confirm. */
+export async function createPaymentCheckout(args: { paymentId: string }): Promise<{ transactionId: string; paddleEnv: string; payment: Payment }> {
+  const res = await api<{ transaction_id: unknown; paddle_env: unknown; payment: unknown }>(
+    `/customer/payments/${args.paymentId}/checkout`,
+    { method: 'POST' },
+  );
+  const transactionId = typeof res.transaction_id === 'string' ? res.transaction_id : '';
+  if (!transactionId) {
+    logger.error('payment checkout missing transaction id', { payment: args.paymentId });
+    throw new Error('Unexpected checkout response from server.');
+  }
+  const paddleEnv = typeof res.paddle_env === 'string' ? res.paddle_env : 'sandbox';
+  return { transactionId, paddleEnv, payment: toPayment(res.payment, 'createPaymentCheckout') };
+}
+
+/** One payment owned by the caller. Poll after the overlay closes — the
+ * webhook confirms asynchronously. */
+export async function fetchPayment(args: { id: string }): Promise<Payment> {
+  const res = await api<{ payment: unknown }>(`/customer/payments/${args.id}`);
+  return toPayment(res.payment, 'fetchPayment');
 }

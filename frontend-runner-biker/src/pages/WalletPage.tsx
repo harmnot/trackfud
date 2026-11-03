@@ -6,12 +6,13 @@
  */
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { Button, Field, List, Item, Note, Page, Ring, Stat } from '../components/ui';
-import { fetchApplication, isPartnerUnlocked, partnerStateOf } from '../features/profile/profileApi';
+import { Link } from 'react-router';
+import { Button, Field, List, Item, Note, Page, Ring, Stat, TextInput } from '../components/ui';
+import { usePartner } from '../features/profile/usePartner';
 import { useStaff } from '../features/staff/staffStore';
 import { balanceMinor, useWallet } from '../features/wallet/walletStore';
+import { fetchPayoutInfo } from '../features/payout/payoutApi';
 import { fetchCoach, type CoachWeekly } from '../features/coach/coachApi';
 import { activeSecondsToday, dayStreak, db, weeklyActiveMinutes, type SessionSummary } from '../lib/db';
 import { DAILY_CAP_S, WHO_WEEKLY_GOAL_MIN, formatDistance, formatDuration, formatMoney, resolveUnits } from '../lib/format';
@@ -21,9 +22,8 @@ import i18n from '../i18n';
 
 export function WalletPage() {
   const { t } = useTranslation();
-  const appQ = useQuery({ queryKey: ['wallet-application'], queryFn: fetchApplication });
   const staffActive = useStaff((s) => s.active);
-  const unlocked = isPartnerUnlocked({ partner: partnerStateOf(appQ.data?.status), staffActive });
+  const { unlocked, isLoading: partnerLoading } = usePartner();
   const txs = useWallet((s) => s.txs);
   const currency = useWallet((s) => s.currency);
   const loaded = useWallet((s) => s.loaded);
@@ -34,6 +34,7 @@ export function WalletPage() {
   const [msg, setMsg] = useState('');
   const [last, setLast] = useState<SessionSummary | null>(null);
   const [lifetime, setLifetime] = useState({ distanceM: 0, movingS: 0, sessions: 0, earned: 0 });
+  const [best, setBest] = useState(0);
   const [weekMin, setWeekMin] = useState(0);
   const [capS, setCapS] = useState(0);
   const [streak, setStreak] = useState(0);
@@ -56,6 +57,7 @@ export function WalletPage() {
         const sessions = await db.sessions.orderBy('startedAt').toArray();
         const latest = sessions[sessions.length - 1] ?? null;
         setLast(latest);
+        setBest(sessions.reduce((m, r) => Math.max(m, r.distanceM), 0));
         setLifetime({
           distanceM: sessions.reduce((s, r) => s + r.distanceM, 0),
           movingS: sessions.reduce((s, r) => s + r.movingS, 0),
@@ -96,11 +98,17 @@ export function WalletPage() {
 
   const bal = balanceMinor(txs);
   const liveBal = server.find((s) => s.currency === currency) ?? server[0] ?? null;
+  const payoutQ = useQuery({
+    queryKey: ['fx-payout-info', currency],
+    queryFn: () => fetchPayoutInfo({ currency }),
+    enabled: currency !== '',
+    staleTime: 60_000,
+  });
 
   return (
     <Page>
       <h1 className="tb-display">{t('wallet.title')}</h1>
-      {!unlocked && appQ.isSuccess && (
+      {!partnerLoading && !unlocked && (
         <div className="tb-card mt-3">
           <p className="text-sm font-bold">{t('account.partnerTitle')}</p>
           <p className="tb-sub mt-1">{t('account.deliveryLocked')}</p>
@@ -115,14 +123,22 @@ export function WalletPage() {
           {liveBal && serverLoaded ? formatMoney(liveBal.balanceMinor, liveBal.currency, locale) : loaded ? formatMoney(bal, currency, locale) : '…'}
         </p>
         <p className="tb-sub">{liveBal && serverLoaded ? t('wallet.live') : t('wallet.mock')}</p>
+        {payoutQ.data && !payoutQ.data.paddle_supported && (
+          <p className="tb-sub mt-1">
+            {t('run.currencyConverts', {
+              from: payoutQ.data.country_currency,
+              to: payoutQ.data.settle_currency,
+              rate: payoutQ.data.rate,
+            })}
+          </p>
+        )}
         <div className="mt-2 flex gap-2">
           <div className="flex-1">
             <Field label={t('wallet.amount')}>
-              <input
-                className="tb-input"
+              <TextInput
                 inputMode="numeric"
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={setAmount}
                 placeholder="0"
                 aria-label={t('wallet.amount')}
               />
@@ -181,6 +197,15 @@ export function WalletPage() {
           <Stat value={formatDuration(lifetime.movingS)} label={t('fitness.moving')} />
           <Stat value={formatMoney(lifetime.earned, currency, locale)} label={t('run.earned')} />
         </div>
+        {/* Personal best + streak: the health extras stay visible even before
+            the weekly coach report loads. */}
+        {(best > 0 || streak >= 2) && (
+          <p className="tb-sub mt-2">
+            {best > 0 && `${t('wallet.best')}: ${formatDistance(best, { locale, units })}`}
+            {best > 0 && streak >= 2 && ' · '}
+            {streak >= 2 && t('wallet.streak', { count: streak })}
+          </p>
+        )}
         {streak >= 6 && <div className="mt-2"><Note tone="info">{t('wallet.restDay')}</Note></div>}
         {capS >= DAILY_CAP_S && <div className="mt-2"><Note tone="error">{t('wallet.dailyCap')}</Note></div>}
       </div>

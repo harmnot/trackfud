@@ -27,6 +27,18 @@ export function setActiveLoc(loc: ActiveLoc, addressId?: string | null): void {
   } catch {
     /* private mode: still works for this session */
   }
+  notifyDeliveryLocation();
+}
+
+/** Tell mounted screens (Home topbar, lists) to re-read the stored point. */
+export function notifyDeliveryLocation(): void {
+  try {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('tb:delivery-location'));
+    }
+  } catch {
+    /* listeners are best-effort; the next remount re-reads storage */
+  }
 }
 
 export function getActiveId(): string | null {

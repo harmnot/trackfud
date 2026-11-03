@@ -2,10 +2,10 @@
 -- name: CreateOrder :one
 INSERT INTO orders(code,customer_id,merchant_id,status,currency,
   subtotal_minor,delivery_fee_minor,service_fee_minor,tip_minor,total_minor,
-  commission_minor,courier_fee_minor,size_class,spill_risk,payment_method,payment_status,
+  commission_minor,courier_fee_minor,size_class,payment_method,payment_status,
   dropoff,dropoff_note,dropoff_pin,prep_minutes,placed_at,idempotency_key)
-VALUES($1,$2,$3,'placed',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'wallet','held',
-  ST_SetSRID(ST_MakePoint($14,$15),4326)::geography,$16,$17,$18,now(),$19) RETURNING id;
+VALUES($1,$2,$3,'placed',$4,$5,$6,$7,$8,$9,$10,$11,$12,'wallet','held',
+  ST_SetSRID(ST_MakePoint($13,$14),4326)::geography,$15,$16,$17,now(),$18) RETURNING id;
 -- name: TransitionOrder :one
 UPDATE orders SET status=$2, updated_at=now() WHERE id=$1 AND status=$3
 RETURNING customer_id, merchant_id, status;

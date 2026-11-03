@@ -1,6 +1,7 @@
-/** Impact card ("You powered X km · Y active min") + the my-impact page.
- * Measured courier-GPS totals come from `GET /v1/customer/impact`; the
- * haversine estimate is the offline fallback for a single order only. */
+/** Impact card ("You powered X km · Y active min"), the Home impact quote,
+ * and the my-impact page. Measured courier-GPS totals come from
+ * `GET /v1/customer/impact`; the haversine estimate is the offline fallback
+ * for a single order only. */
 
 import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
@@ -12,9 +13,12 @@ import i18n from '../../i18n';
 import type { Order } from '../orders/types';
 import { estimateImpact } from './api';
 import { useImpact } from './hooks';
-import type { ImpactRecent } from './types';
+import { latestMeasuredImpact, type ImpactRecent } from './types';
 
 type Shop = { lat: number; lng: number };
+
+/** Skeleton height matching one quote card while impact loads. */
+const QUOTE_SKELETON_PX = 96;
 
 function impactText(args: { km: number; min: number; t: (k: string) => string }): string {
   return args.t('impact.powered').replace('{km}', String(args.km)).replace('{min}', String(args.min));
@@ -86,6 +90,38 @@ function ImpactEstimate(args: { order: Order }) {
         <Link to="/impact" className="tb-btn tb-btn-soft tb-btn-sm">{t('impact.seeMine')}</Link>
       </p>
     </section>
+  );
+}
+
+/** Home impact quote: the latest measured carry ("You powered 2.4 km of
+ * Rina's workout."), an invitation before the first delivery, and nothing
+ * when no measured number exists — never an invented figure or name. */
+export function ImpactQuote() {
+  const { t } = useTranslation();
+  const impact = useImpact();
+  if (impact.isLoading) {
+    return <div className="mt-4"><Skeleton height={QUOTE_SKELETON_PX} /></div>;
+  }
+  if (impact.isError || !impact.data) return null;
+  const latest = latestMeasuredImpact(impact.data.recent);
+  if (latest) {
+    const distance = formatDistance(latest.distanceM, i18n.language);
+    const line = latest.courierFirstName === ''
+      ? t('impact.quoteLineAnon', { distance })
+      : t('impact.quoteLine', { distance, name: latest.courierFirstName });
+    return <QuoteCard line={line} />;
+  }
+  if (impact.data.ordersDelivered === 0) return <QuoteCard line={t('impact.quoteInvite')} />;
+  return null;
+}
+
+function QuoteCard(args: { line: string }) {
+  const { t } = useTranslation();
+  return (
+    <div className="tb-quote mt-4">
+      <p>"{args.line}"</p>
+      <small>{t('impact.quoteCaption')}</small>
+    </div>
   );
 }
 

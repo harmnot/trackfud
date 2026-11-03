@@ -7,9 +7,24 @@
 import { create } from 'zustand';
 import { db } from '../../lib/db';
 import { logger } from '../../lib/logger';
+import type { LatLng } from '../../lib/maps';
 
 /** One pad point, 0–100 in both axes (device-independent). */
 export type PadPoint = { x: number; y: number };
+
+/** Map placement for a saved track (Strava-art anchor + projected paths). */
+export type TrackGeo = {
+  center: LatLng;
+  /** Real width/height of the pad in meters at the anchor. */
+  spanM: number;
+  /** Pad width ÷ height measured at draw time (1 = square pad or legacy). */
+  aspect: number;
+  /** Sketch projected onto the map (straight connectors). */
+  path: LatLng[];
+  /** Road-snapped route, when Directions succeeded. */
+  snapped: LatLng[] | null;
+  travelMode: 'walking' | 'bicycling';
+};
 
 /** A saved track (drawn loop or saved past session). */
 export type SavedTrack = {
@@ -19,13 +34,15 @@ export type SavedTrack = {
   points: PadPoint[];
   /** Rough loop length in meters (clearly an estimate, see estimator). */
   estimateM: number;
+  /** Map placement, present when the track was drawn against a map anchor. */
+  geo?: TrackGeo;
 };
 
 type TrackState = {
   tracks: SavedTrack[];
   loaded: boolean;
   load: () => Promise<void>;
-  save: (args: { name: string; points: PadPoint[] }) => Promise<SavedTrack | null>;
+  save: (args: { name: string; points: PadPoint[]; geo?: TrackGeo }) => Promise<SavedTrack | null>;
   remove: (args: { id: string }) => Promise<void>;
 };
 
@@ -54,6 +71,24 @@ export function simplifyStroke(points: PadPoint[]): PadPoint[] {
   return out;
 }
 
+/**
+ * Find the session's saved track: stable ids first, legacy names as the
+ * fallback (sessions started before id-based picks only stored a name).
+ */
+export function selectSessionTrack(args: {
+  tracks: SavedTrack[];
+  trackId: string | null;
+  trackName: string | null;
+}): SavedTrack | null {
+  const { tracks, trackId, trackName } = args;
+  if (trackId) {
+    const byId = tracks.find((tr) => tr.id === trackId);
+    if (byId) return byId;
+  }
+  if (trackName) return tracks.find((tr) => tr.name === trackName) ?? null;
+  return null;
+}
+
 export const useTracks = create<TrackState>((set, get) => ({
   tracks: [],
   loaded: false,
@@ -66,7 +101,7 @@ export const useTracks = create<TrackState>((set, get) => ({
       set({ loaded: true });
     }
   },
-  save: async ({ name, points }) => {
+  save: async ({ name, points, geo }) => {
     const clean = simplifyStroke(points.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y)));
     if (name.trim().length === 0 || clean.length < 3) return null;
     const track: SavedTrack = {
@@ -75,6 +110,7 @@ export const useTracks = create<TrackState>((set, get) => ({
       createdAt: Date.now(),
       points: clean,
       estimateM: estimateTrackLengthM(clean),
+      ...(geo ? { geo } : {}),
     };
     try {
       await db.tracks.add(track);

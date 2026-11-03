@@ -31,7 +31,6 @@ export type ServerOffer = {
     payout_minor: number;
     currency: string;
     size_class: string;
-    spill_risk: string;
     ready_at_est: string;
     window_end: string;
   };
@@ -48,9 +47,9 @@ export type ServerDelivery = {
   pickup: { merchant_name: string; lat: number; lng: number; note: string; address: string };
   eta_s: number;
   route_polyline: string;
+  /** Google's required WALK/BICYCLE beta disclaimer, served per leg. */
   route_warning: string;
   size_class: string;
-  spill_risk: string;
   ready_at_est: string;
   window_end: string;
   nudged: boolean;
@@ -70,7 +69,10 @@ export type ServerMessage = {
   sender: string;
   body: string;
   lang: string;
-  translated_body: string;
+  /** Omitted until the translate job (or a Translate tap) stored one. */
+  translated_body?: string;
+  /** True when Muse Spark produced the translation (false = offline dictionary). */
+  translated_live?: boolean;
   created_at: string;
 };
 
@@ -95,6 +97,32 @@ export type WithdrawalRow = {
   created_at: string;
 };
 
+/** Scroll page of withdrawal history: rows plus the server envelope. */
+export type WithdrawalPage = {
+  rows: WithdrawalRow[];
+  page: number;
+  perPage: number;
+  total: number;
+  hasMore: boolean;
+};
+
+/** Scroll page of delivery history: rows plus the server envelope. */
+export type DeliveryHistoryPage = {
+  rows: DeliveryHistoryRow[];
+  page: number;
+  perPage: number;
+  total: number;
+  hasMore: boolean;
+};
+
+function numOf(raw: unknown, fallback: number): number {
+  return typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : fallback;
+}
+
+function pageParams(params: URLSearchParams, args: { page: number; perPage: number }): void {
+  params.set('page', String(args.page));
+  params.set('per_page', String(args.perPage));
+}
 /** `GET /courier/coach/weekly` (openapi `CoachWeekly`). */
 export type CoachWeekly = {
   distance_m: number;
@@ -115,13 +143,21 @@ export type CoachWeekly = {
 export type DeliveryHistoryRow = {
   delivery_id: string;
   type: string;
+  /** Terminal state of the leg: paid out or never settled. */
+  status: 'delivered' | 'cancelled' | string;
   order_code: string;
   payout: Money;
   merchant_name: string;
   distance_m: number;
   active_s: number;
   courier_stars: number;
+  /** Free-form customer tag labels (aggregated on the Ratings page). */
+  courier_tags: string[];
   delivered_at: string;
+  /** Leg creation time; the list falls back to it when delivered_at is null. */
+  created_at: string;
+  /** Why the leg never settled (cancelled rows only). */
+  cancel_note: string;
 };
 
 /** Server voice intent frame (openapi `GET /courier/voice` replies). */
@@ -131,6 +167,8 @@ export type VoiceIntentFrame = {
   offer_id: string | null;
   confirmation: string | null;
   live: boolean;
+  /** What the server transcribed from the courier's audio ('' when none). */
+  transcript: string;
 };
 
 /** List pending dispatch offers (openapi `listOffers`). */
@@ -162,11 +200,14 @@ export async function acceptStaffOffer(args: { offerId: string }): Promise<Deliv
 
 /**
  * Current assigned delivery, or null when there is none (openapi
- * `activeDelivery`; a 404 means "nothing assigned", not an error).
+ * `activeDelivery`; a 404 means "nothing assigned", and a 200 with a null
+ * delivery is treated the same so recovery never crashes on the shape).
  */
 export async function fetchActiveDelivery(): Promise<DeliveryEnvelope | null> {
   try {
-    return await api<DeliveryEnvelope>('/courier/deliveries/active');
+    const env = await api<DeliveryEnvelope>('/courier/deliveries/active');
+    if (!env || !env.delivery) return null;
+    return env;
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) return null;
     throw err;
@@ -242,10 +283,25 @@ export async function fetchEarnings(): Promise<EarningsRow[]> {
   return res.earnings ?? [];
 }
 
-/** Withdrawal history (openapi `listWithdrawals`, B5). */
-export async function listWithdrawals(): Promise<WithdrawalRow[]> {
-  const res = await api<{ withdrawals: WithdrawalRow[] }>('/courier/withdrawals');
-  return res.withdrawals ?? [];
+/** Withdrawal history, scroll-paginated newest first (openapi `listWithdrawals`, B5). */
+export async function listWithdrawals(args: { page: number; perPage: number }): Promise<WithdrawalPage> {
+  const params = new URLSearchParams();
+  pageParams(params, args);
+  const res = await api<{
+    withdrawals: unknown;
+    page: unknown;
+    per_page: unknown;
+    total: unknown;
+    has_more: unknown;
+  }>(`/courier/withdrawals?${params.toString()}`);
+  const rows = Array.isArray(res.withdrawals) ? (res.withdrawals as WithdrawalRow[]) : [];
+  return {
+    rows,
+    page: numOf(res.page, args.page),
+    perPage: numOf(res.per_page, args.perPage),
+    total: numOf(res.total, rows.length),
+    hasMore: res.has_more === true,
+  };
 }
 
 /** Request a payout; idempotent on retry (openapi `createWithdrawal`, B5). */
@@ -258,10 +314,41 @@ export async function createWithdrawal(args: { amountMinor: number; currency: st
   return res.withdrawal;
 }
 
-/** Delivery history with courier stars (openapi `listDeliveryHistory`). */
-export async function fetchDeliveryHistory(): Promise<DeliveryHistoryRow[]> {
-  const res = await api<{ deliveries: DeliveryHistoryRow[] }>('/courier/deliveries/history');
-  return res.deliveries ?? [];
+/** Terminal-state filter for the courier Orders list. */
+export type DeliveryHistoryStatus = 'all' | 'delivered' | 'cancelled';
+
+/** Delivery history with courier stars, scroll-paginated (openapi `listDeliveryHistory`). */
+export async function fetchDeliveryHistory(args: {
+  page: number;
+  perPage: number;
+  status?: DeliveryHistoryStatus;
+  q?: string;
+}): Promise<DeliveryHistoryPage> {
+  const params = new URLSearchParams();
+  pageParams(params, args);
+  if (args.status && args.status !== 'all') params.set('status', args.status);
+  const q = (args.q ?? '').trim();
+  if (q.length > 0) params.set('q', q.slice(0, 64));
+  const res = await api<{
+    deliveries: unknown;
+    page: unknown;
+    per_page: unknown;
+    total: unknown;
+    has_more: unknown;
+  }>(`/courier/deliveries/history?${params.toString()}`);
+  const rows = Array.isArray(res.deliveries) ? (res.deliveries as DeliveryHistoryRow[]) : [];
+  return {
+    rows,
+    page: numOf(res.page, args.page),
+    perPage: numOf(res.per_page, args.perPage),
+    total: numOf(res.total, rows.length),
+    hasMore: res.has_more === true,
+  };
+}
+
+/** One courier leg in full (openapi `getDelivery`); history rows link here. */
+export async function fetchDeliveryDetail(args: { deliveryId: string }): Promise<DeliveryEnvelope> {
+  return api<DeliveryEnvelope>(`/courier/deliveries/${args.deliveryId}`);
 }
 
 /** Weekly AI coach stats + plan, not medical advice (openapi `coachWeekly`, B6). */

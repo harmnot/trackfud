@@ -1,16 +1,26 @@
 /**
  * Run Mode: huge stats, goal ring, offer overlay, nudges. The update
- * prompt never fires here (see `isMidRun`); offers pause while GPS is
- * stale; declining is never punished.
+ * prompt never fires here (see `isMidRun`); the server decides offer
+ * eligibility (fresh batch < 60 s, approval, corridor), so offers render
+ * even while the local GPS signal lags — a client-side stale belief must
+ * never hide a real pending offer. Declining is never punished.
+ *
+ * GPS is not owned here: the app-level `WorkSessionTracker` streams the
+ * session on every screen (and confirms a refresh-restored one), and this
+ * page only reads the run store — stats, signal, notices, resume state.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router';
 import { Button, Note, Page, Ring } from '../components/ui';
 import { OfferCard } from '../components/OfferCard';
 import { RunStats } from '../components/RunStats';
 import { useRun } from '../features/run/sessionStore';
-import { useRunEngine } from '../features/run/useRunEngine';
+import { selectSessionTrack, useTracks } from '../features/tracks/trackStore';
+import { LiveTrackMap } from '../features/tracks/LiveTrackMap';
+import type { LatLng } from '../lib/maps';
+import { endWorkSession } from '../features/run/sessionApi';
 import { useOffers, demoOffer } from '../features/offers/offerStore';
 import { parseOffer } from '../features/offers/types';
 import { toActiveDelivery, useDelivery } from '../features/delivery/deliveryStore';
@@ -25,12 +35,13 @@ import {
 } from '../features/delivery/courierApi';
 import { ApiError } from '../lib/api';
 import { useChat } from '../features/chat/chatStore';
+import { usePartner } from '../features/profile/usePartner';
 import { useCadence } from '../features/health/useCadence';
 import { useStaff } from '../features/staff/staffStore';
 import { parseVoiceCommand, voiceReply, type VoiceIntent } from '../features/voice/voiceCommands';
 import { useVoiceCopilot } from '../features/voice/useVoiceCopilot';
 import { db, type SessionSummary } from '../lib/db';
-import { formatDistance, resolveUnits } from '../lib/format';
+import { formatDistance, resolveCourierLocale } from '../lib/format';
 import { logger } from '../lib/logger';
 import { alertOffer, speak, stopSpeaking } from '../lib/notify';
 import { socket, type IncomingMsg } from '../lib/ws';
@@ -38,16 +49,20 @@ import { CadenceBadge } from '../components/CadenceBadge';
 import { VoicePanel } from '../components/VoicePanel';
 import i18n from '../i18n';
 
-type Notice = { kind: 'hydration' | 'stale' | 'gap'; text: string };
-
 const DEMO_OFFER_AFTER_MS = 20000;
 
 export function RunModePage() {
   const { t } = useTranslation();
   const nav = useNavigate();
+  const queryClient = useQueryClient();
   const phase = useRun((s) => s.phase);
   const setup = useRun((s) => s.setup);
+  const serverLinked = useRun((s) => s.serverLinked);
   const stats = useRun((s) => s.stats);
+  const gps = useRun((s) => s.gps);
+  const notices = useRun((s) => s.notices);
+  const resuming = useRun((s) => s.resuming);
+  const { unlocked: partnerUnlocked, isLoading: partnerLoading } = usePartner();
   const finish = useRun((s) => s.finish);
   const reset = useRun((s) => s.reset);
   const offer = useOffers((s) => s.current);
@@ -55,7 +70,6 @@ export function RunModePage() {
   const deliveryActive = useDelivery((s) => s.active);
   const staffActive = useStaff((s) => s.active);
   const staffName = useStaff((s) => s.staffName);
-  const [notices, setNotices] = useState<Notice[]>([]);
   const [cheer, setCheer] = useState<string | null>(null);
   const [lastHeard, setLastHeard] = useState<string | null>(null);
   const [lastReply, setLastReply] = useState<string | null>(null);
@@ -64,17 +78,52 @@ export function RunModePage() {
   const runVoiceRef = useRef<(text: string) => void>(() => undefined);
   const demoFired = useRef(false);
 
-  const lang = (['en', 'id', 'ms'].includes(i18n.language) ? i18n.language : 'en') as 'en' | 'id' | 'ms';
-  const locale = lang === 'id' ? 'id-ID' : lang === 'ms' ? 'ms-MY' : 'en-GB';
-  const units = resolveUnits(locale);
-
-  useRunEngine({
-    lang,
-    units,
-    onNotice: (n) => setNotices((prev) => (prev.some((p) => p.kind === n.kind) ? prev : [...prev, n])),
-  });
+  const { lang, locale, units } = resolveCourierLocale(i18n.language);
 
   const cadence = useCadence({ enabled: (setup?.mode ?? 'runner') === 'runner' });
+
+  // Saved-track live route: resolve the track (id first, legacy name as
+  // fallback) and grow the GPS trail from tracker fixes. Both stay on-device.
+  const sessionId = useRun((s) => s.sessionId);
+  const savedTracks = useTracks((s) => s.tracks);
+  const [trail, setTrail] = useState<LatLng[]>([]);
+  const [follow, setFollow] = useState(true);
+  useEffect(() => {
+    if (setup?.trackKind === 'saved') void useTracks.getState().load();
+  }, [setup?.trackKind]);
+  useEffect(() => {
+    setTrail([]);
+    setFollow(true);
+  }, [sessionId]);
+  const sessionTrack = useMemo(() => {
+    if (setup?.trackKind !== 'saved') return null;
+    return selectSessionTrack({ tracks: savedTracks, trackId: setup.trackId ?? null, trackName: setup.trackName });
+  }, [setup, savedTracks]);
+  /** AI plan live route: real geography from POST /courier/run-plans, drawn
+   * like a saved track so the corridor the courier runs matches dispatch. */
+  const aiPlanned = useMemo(() => {
+    if (setup?.trackKind !== 'ai' || !setup?.plannedTrack) return null;
+    const coords = setup.plannedTrack.coordinates;
+    if (!Array.isArray(coords) || coords.length < 2) return null;
+    const pts = coords
+      .map((c) => (Array.isArray(c) && c.length >= 2 ? { lat: c[1] as number, lng: c[0] as number } : null))
+      .filter((p): p is LatLng => !!p && Number.isFinite(p.lat) && Number.isFinite(p.lng));
+    return pts.length >= 2 ? pts : null;
+  }, [setup]);
+  useEffect(() => {
+    const { lastLat, lastLng } = stats;
+    if (lastLat == null || lastLng == null) return;
+    setTrail((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.lat === lastLat && last.lng === lastLng) return prev;
+      const next = [...prev, { lat: lastLat, lng: lastLng }];
+      return next.length > 2000 ? next.slice(next.length - 2000) : next;
+    });
+  }, [stats.lastLat, stats.lastLng, stats.lastTs]);
+  const liveFix = useMemo(() => {
+    if (stats.lastLat == null || stats.lastLng == null) return null;
+    return { lat: stats.lastLat, lng: stats.lastLng };
+  }, [stats.lastLat, stats.lastLng]);
 
   // 1 s countdown for the offer window (informational, never a rush timer).
   useEffect(() => {
@@ -84,9 +133,18 @@ export function RunModePage() {
   }, [offer]);
 
   // Live offers from dispatch: socket frames first, `GET /courier/offers`
-  // poll every 5 s as backup. The labelled demo simulator fires only when
-  // the backend is unreachable (offline judge path). Cheers are READ ALOUD
-  // (supporters power the run); chat lands in ChatPage.
+  // poll every 5 s as backup. Dispatch pings with a minimal frame (ids +
+  // expiry), so a ping refetches the full pending offer — the server stays
+  // the truth and frames stay small on a runner's radio. Offers are shown
+  // and polled whenever a session is recording with no active delivery,
+  // deliberately NOT gated on the local GPS/stale signal: eligibility lives
+  // server-side (fresh batch < 60 s, approved, corridor), and the local
+  // signal can lag the server (backgrounded timers, slow first fix) while
+  // a real pending offer waits. The GPS/stale banners below stay purely
+  // informational. The labelled demo simulator fires only when the backend
+  // is unreachable (offline judge path). Cheers are READ ALOUD (supporters power the run); chat lands in
+  // ChatPage. The `delivery.leave_now` nudge arms "head now" straight from
+  // the kitchen-ready timing; a sanction mid-run blocks new offers.
   useEffect(() => {
     function takeOffer(raw: unknown): void {
       const parsed = parseOffer(raw);
@@ -95,36 +153,98 @@ export function RunModePage() {
         return;
       }
       const st = useRun.getState();
-      if (st.phase !== 'active' || st.stats.stale || useDelivery.getState().active) return;
+      // Server-truth eligibility: never gate a live offer on the local
+      // GPS/stale belief (see above).
+      if (st.phase !== 'active' || useDelivery.getState().active) return;
       const line = `${parsed.merchantName}, ${formatDistance(parsed.addsM, { locale, units })}. Accept?`;
       lastOfferText.current = line;
       useOffers.getState().show(parsed);
       alertOffer({ line, lang });
     }
+    /** Pull the full pending offer after a minimal dispatch ping. */
+    async function refetchOffer(): Promise<void> {
+      const st = useRun.getState();
+      if (st.phase !== 'active' || useDelivery.getState().active || useOffers.getState().current) return;
+      try {
+        const staff = useStaff.getState().active;
+        const offers = staff ? await listStaffOffers() : await listOffers();
+        const first = offers.find((o) => o.status === 'pending') ?? offers[0];
+        if (first) takeOffer(first);
+      } catch (err) {
+        logger.warn('offer refetch failed, poll backup owns the next try', err);
+      }
+    }
     function onMsg(msg: IncomingMsg): void {
+      // Cheers arrive from the customer track (`cheerOrder`): the server sends
+      // both `text` and the legacy `message` shape — either one speaks aloud.
       if (msg.type === 'cheer') {
-        setCheer(msg.text);
-        speak(msg.text, { lang });
+        const line = msg.text ?? msg.message ?? '';
+        if (line.trim().length === 0) return;
+        setCheer(line);
+        speak(line, { lang });
         return;
       }
-      if (msg.type === 'chat.message') {
-        void useChat.getState().receive({ text: msg.text, lang: msg.lang });
-        return;
-      }
+      // Chat lines + their translations go through bindChatFrames (bound
+      // once in App), which keeps the server message id.
       if (msg.type === 'voice.transcript') {
         // Server transcript path: same intent pipeline.
         runVoiceRef.current(msg.text);
         return;
       }
+      if (msg.type === 'delivery.leave_now') {
+        useDelivery.getState().nudgeHeadNow(null);
+        const name = useDelivery.getState().active?.merchantName ?? '';
+        if (name) speak(`Head to ${name} now.`, { lang });
+        return;
+      }
+      if (msg.type === 'delivery.eta') {
+        useDelivery.getState().setEta(msg.eta_s);
+        return;
+      }
+      if (msg.type === 'courier.status') {
+        // Freeze/ban mid-run: offers stop, the notice explains, the wallet
+        // stays open. Refetch the standing; the account screens render it.
+        void queryClient.invalidateQueries({ queryKey: ['partner-application'] });
+        if (msg.status === 'frozen' || msg.status === 'banned') {
+          const line = t('account.sanctionedRun', {
+            defaultValue: 'Your courier account status changed — new offers are paused. Money you earned stays withdrawable.',
+          });
+          setLastReply(line);
+          speak(line, { lang });
+        }
+        return;
+      }
+      if (msg.type === 'offer.taken') {
+        // Lost the race: another courier accepted first (atomic claim on the
+        // server). Clear a card for the same delivery so it never lingers
+        // until expiry, then say so — one order is one courier.
+        const cur = useOffers.getState().current;
+        if (cur && !cur.demo && msg.delivery_id && cur.deliveryId === msg.delivery_id) {
+          useOffers.getState().clear();
+          const taken = t('run.taken');
+          setLastReply(taken);
+          speak(taken, { lang });
+        }
+        return;
+      }
       if (msg.type !== 'offer.created') return;
-      takeOffer((msg as { offer: unknown }).offer ?? msg);
+      // Legacy full frames still parse directly; minimal pings refetch.
+      if (msg.offer) {
+        takeOffer(msg.offer);
+        return;
+      }
+      void refetchOffer();
     }
     const off = socket.onMessage(onMsg);
     let stopped = false;
+    // The app-level tracker also connects, but Run Mode owns the offer
+    // stream: connect here too so offers never depend on the tracker's
+    // timing — connect is idempotent while the socket is open/connecting.
+    void socket.connect();
     async function pollOnce(): Promise<void> {
       if (stopped) return;
       const st = useRun.getState();
-      if (st.phase !== 'active' || st.stats.stale || useDelivery.getState().active || useOffers.getState().current) return;
+      if (st.phase !== 'active' || useDelivery.getState().active || useOffers.getState().current) return;
       try {
         const staff = useStaff.getState().active;
         const offers = staff ? await listStaffOffers() : await listOffers();
@@ -188,6 +308,8 @@ export function RunModePage() {
         merchantName: cur.merchantName,
         feeMinor: cur.feeMinor,
         currency: cur.currency,
+        etaS: null,
+        routeWarning: null,
         demo: true,
       });
       speak(`Accepted. Heading to ${cur.merchantName}.`, { lang });
@@ -226,7 +348,7 @@ export function RunModePage() {
 
   /** Server voice intent (B6 relay): speak the reply, execute accepts. */
   function runServerIntent(frame: VoiceIntentFrame): void {
-    setLastHeard(frame.reply_text);
+    setLastHeard(frame.transcript || null);
     setLastReply(frame.reply_text);
     speak(frame.reply_text, { lang });
     if (frame.intent !== 'accept' || !frame.offer_id || !frame.confirmation) return;
@@ -299,6 +421,12 @@ export function RunModePage() {
 
   async function endSession(): Promise<void> {
     const s = useRun.getState();
+    const sessionId = s.sessionId;
+    // Close the server session first (lifetime totals, splits, track fold
+    // in there); the local summary below is the offline mirror either way.
+    if (sessionId && s.serverLinked) {
+      await endWorkSession({ sessionId });
+    }
     const summary: SessionSummary = {
       sessionId: s.sessionId ?? crypto.randomUUID(),
       mode: s.setup?.mode ?? 'runner',
@@ -338,8 +466,35 @@ export function RunModePage() {
       {cheer && (
         <div className="mt-3 tb-toast" key={cheer}><Note tone="info">💪 {cheer}</Note></div>
       )}
-      {stats.stale && (
+      {stats.stale && stats.lastLat != null && (
         <div className="mt-3"><Note tone="error">{t('run.stale')}</Note></div>
+      )}
+      {gps === 'waiting' && !stats.stale && (
+        <div className="mt-3"><Note tone="info">{t('run.gpsWaiting')}</Note></div>
+      )}
+      {gps === 'denied' && (
+        <div className="mt-3"><Note tone="error">{t('run.gpsDenied')}</Note></div>
+      )}
+      {gps === 'weak' && (
+        <div className="mt-3"><Note tone="error">{t('run.gpsWeak')}</Note></div>
+      )}
+      {gps === 'unavailable' && (
+        <div className="mt-3"><Note tone="error">{t('run.gpsUnavailable')}</Note></div>
+      )}
+      {resuming && (
+        <div className="mt-3"><Note tone="info">{t('run.resuming')}</Note></div>
+      )}
+      {!serverLinked && (
+        <div className="mt-3"><Note tone="info">{t('run.sessionOffline')}</Note></div>
+      )}
+      {serverLinked && !partnerLoading && !partnerUnlocked && (
+        <div className="mt-3"><Note tone="info">{t('run.readyLocked')}</Note></div>
+      )}
+      {serverLinked && partnerUnlocked && gps === 'ok' && !stats.stale && (
+        <div className="mt-3"><Note tone="info">{t('run.readyLive')}</Note></div>
+      )}
+      {serverLinked && partnerUnlocked && (gps !== 'ok' || stats.stale) && (
+        <div className="mt-3"><Note tone="info">{t('run.readyNoGps')}</Note></div>
       )}
       <div className="tb-timer mt-3">
         <div className="mt-2">
@@ -363,12 +518,56 @@ export function RunModePage() {
           />
         </div>
       </div>
+      {setup.trackKind === 'saved' && (
+        <div className="tb-card mt-3">
+          <p className="text-sm font-bold">{t('run.liveRoute')}{sessionTrack ? ` · ${sessionTrack.name}` : ''}</p>
+          <p className="tb-sub mt-1">{t('run.liveRouteSub')}</p>
+          <div className="mt-2">
+            {!sessionTrack ? (
+              <Note tone="info">{t('run.trackMissing')} <Link to="/tracks" className="underline">{t('tracks.title')}</Link></Note>
+            ) : !sessionTrack.geo ? (
+              <Note tone="info">{t('run.noGeoTrack')} <Link to="/tracks" className="underline">{t('tracks.title')}</Link></Note>
+            ) : (
+              <LiveTrackMap
+                center={sessionTrack.geo.center}
+                planned={sessionTrack.geo.path}
+                snapped={sessionTrack.geo.snapped}
+                trail={trail}
+                live={liveFix}
+                follow={follow}
+                onToggleFollow={() => setFollow((f) => !f)}
+              />
+            )}
+          </div>
+        </div>
+      )}
+      {setup.trackKind === 'ai' && (
+        <div className="tb-card mt-3">
+          <p className="text-sm font-bold">{t('run.liveRoute')}{setup.planName ? ` · ${setup.planName}` : ''}</p>
+          <p className="tb-sub mt-1">{t('planner.liveSub')}</p>
+          <div className="mt-2">
+            {!aiPlanned ? (
+              <Note tone="info">{t('planner.noPlanInline')} <Link to="/planner" className="underline">{t('planner.title')}</Link></Note>
+            ) : (
+              <LiveTrackMap
+                center={aiPlanned[0] as LatLng}
+                planned={aiPlanned}
+                snapped={null}
+                trail={trail}
+                live={liveFix}
+                follow={follow}
+                onToggleFollow={() => setFollow((f) => !f)}
+              />
+            )}
+          </div>
+        </div>
+      )}
       {stats.gapCount > 0 && (
         <div className="mt-3"><Note tone="info">{t('run.gaps', { count: stats.gapCount })}</Note></div>
       )}
-      {notices.map((n) => (
-        <div className="mt-3" key={n.kind}>
-          <Note tone={n.kind === 'stale' ? 'error' : 'info'}>{t(`run.notice_${n.kind}`)}</Note>
+      {notices.map((kind) => (
+        <div className="mt-3" key={kind}>
+          <Note tone={kind === 'stale' ? 'error' : 'info'}>{t(`run.notice_${kind}`)}</Note>
         </div>
       ))}
       {deliveryActive && (
@@ -432,6 +631,19 @@ export function RunModePage() {
             demoLabel={t('run.demoOffer')}
             onAccept={() => void accept()}
             onDecline={decline}
+            voice={
+              copilot.phase === 'unsupported'
+                ? undefined
+                : {
+                    listening: copilot.phase === 'listening',
+                    holdLabel: t('voice.hold'),
+                    releaseLabel: t('voice.release'),
+                    heardLabel: t('voice.heard'),
+                    heard: lastHeard,
+                    onHold: copilot.startTalk,
+                    onRelease: () => copilot.stopTalk(),
+                  }
+            }
           />
         </div>
       )}

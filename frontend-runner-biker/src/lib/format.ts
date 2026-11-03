@@ -41,6 +41,23 @@ export function resolveUnits(locale: string): Units {
   return locale === 'en-GB' ? 'mi' : 'km';
 }
 
+/** UI languages the courier app ships (`locales/{en,id,ms}.json`). */
+export type CourierLang = 'en' | 'id' | 'ms';
+
+/** Intl locale per UI language (number formats, default units, voice). */
+const LOCALE_FOR_LANG: Record<CourierLang, string> = { en: 'en-GB', id: 'id-ID', ms: 'ms-MY' };
+
+/**
+ * Resolve the active i18n language to the courier language, Intl locale and
+ * display units. Run Mode and the app-level tracker share it so on-screen
+ * stats and spoken split cues always agree.
+ */
+export function resolveCourierLocale(language: string): { lang: CourierLang; locale: string; units: Units } {
+  const lang: CourierLang = language === 'id' || language === 'ms' ? language : 'en';
+  const locale = LOCALE_FOR_LANG[lang];
+  return { lang, locale, units: resolveUnits(locale) };
+}
+
 /** Format integer minor units as money (ISO-4217 aware: IDR has 0 decimals). */
 export function formatMoney(amountMinor: number, currency: string, locale: string): string {
   const digits = new Intl.NumberFormat(locale, { style: 'currency', currency }).resolvedOptions()
@@ -88,4 +105,22 @@ export function formatDuration(totalS: number): string {
 export function formatEta(distanceM: number, args: { mode: CourierMode; locale: string; units: Units }): string {
   const mins = Math.max(1, Math.round(distanceM / PLAN_MPS[args.mode] / 60));
   return `${mins} min · ${formatDistance(distanceM, args)}`;
+}
+
+/** Format an ISO timestamp as a local date + time for review banners. */
+export function formatSubmittedAt(iso: string | null | undefined): string {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return new Intl.DateTimeFormat(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(d);
+  } catch {
+    return iso;
+  }
 }

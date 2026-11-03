@@ -79,8 +79,56 @@ func TestLoad_DemoMode(t *testing.T) {
 
 	// Empty env should leave config.yaml value (false) in place.
 	t.Setenv("TF_DEMO_MODE", "")
+	t.Setenv("APP_DEVELOPMENT", "")
 	c, _ = Load()
 	if c.Server.DemoMode != false {
 		t.Fatalf("DemoMode = %v, want false (from config.yaml when env empty)", c.Server.DemoMode)
+	}
+}
+
+// TestLoad_AppDevelopment: the canonical switch. Explicit APP_DEVELOPMENT
+// wins over config.yaml (production → false, local/development/demo → true),
+// while an explicit TF_DEMO_MODE still wins over both.
+func TestLoad_AppDevelopment(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(p, []byte("server:\n  demo_mode: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TF_CONFIG", p)
+	t.Setenv("TF_DEMO_MODE", "")
+
+	for _, dev := range []string{"local", "development", "demo", ""} {
+		t.Setenv("APP_DEVELOPMENT", dev)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Empty APP_DEVELOPMENT leaves the file value (true) in place.
+		if c.Server.DemoMode != true {
+			t.Fatalf("APP_DEVELOPMENT=%q: DemoMode = %v, want true", dev, c.Server.DemoMode)
+		}
+	}
+
+	t.Setenv("APP_DEVELOPMENT", "production")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Server.DemoMode != false {
+		t.Fatalf("APP_DEVELOPMENT=production: DemoMode = %v, want false", c.Server.DemoMode)
+	}
+
+	// Explicit TF_DEMO_MODE wins over APP_DEVELOPMENT either way.
+	t.Setenv("TF_DEMO_MODE", "true")
+	c, _ = Load()
+	if c.Server.DemoMode != true {
+		t.Fatalf("TF_DEMO_MODE=true + APP_DEVELOPMENT=production: DemoMode = %v, want true", c.Server.DemoMode)
+	}
+	t.Setenv("APP_DEVELOPMENT", "demo")
+	t.Setenv("TF_DEMO_MODE", "false")
+	c, _ = Load()
+	if c.Server.DemoMode != false {
+		t.Fatalf("TF_DEMO_MODE=false + APP_DEVELOPMENT=demo: DemoMode = %v, want false", c.Server.DemoMode)
 	}
 }

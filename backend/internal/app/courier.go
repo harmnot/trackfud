@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,7 +59,7 @@ func (s *Server) getProfile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"status": "none", "mode": mode, "profile": map[string]any{}})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"status": p["status"], "mode": p["mode"], "profile": p})
+	writeJSON(w, 200, map[string]any{"status": p["status"], "mode": p["mode"], "standing": p["standing"], "profile": p})
 }
 
 // saveProfile autosaves the application (draft survives; finish later).
@@ -228,7 +229,7 @@ func (s *Server) loadProfile(ctx context.Context, userID string) (map[string]any
 	if status == "none" || status == "" {
 		status = courierStatus
 	}
-	out := map[string]any{"mode": mode, "status": status, "legal_name": legal, "nationality": nat,
+	out := map[string]any{"mode": mode, "status": status, "standing": courierStatus, "legal_name": legal, "nationality": nat,
 		"address": addr, "emergency_contact": em, "phone": phone,
 		"id_doc_type": docType, "id_number_saved": hash != "",
 		"id_front_file_id": strOrEmpty(front), "id_back_file_id": strOrEmpty(back),
@@ -312,6 +313,11 @@ func intOf(v any) int {
 // ---------- ID number crypto (demo-grade AES-GCM; KMS in production) ----------
 
 func (s *Server) idKey() [32]byte {
+	// Dedicated key wins when the operator sets TF_IDENC_KEY; otherwise the
+	// JWT-secret-derived key (backward compatible with existing rows).
+	if k := strings.TrimSpace(s.cfg.IDEncKey); k != "" {
+		return sha256.Sum256([]byte("tf-idenc-v1:" + k))
+	}
 	return sha256.Sum256([]byte("tf-idenc-v1:" + s.cfg.JWTSecret))
 }
 
@@ -348,25 +354,87 @@ func hashIDNumber(number string) string {
 
 // ---------- Admin review (approve/reject + sanctions) ----------
 
-// listApplications serves the admin review queue.
+// courierDecidable lists the application states an admin decision can be
+// made from: fitness passed (or legacy pending) through review. A courier
+// mid-test ("testing") or already decided is never decidable here — only a
+// fresh terminal state change unlocks the fitness page again.
+var courierDecidable = map[string]bool{
+	"pending": true, "pending_review": true, "passed_test": true,
+}
+
+// courierDecision maps (current status, approve?) to the next status.
+// Only submitted applications can be decided; approving an already-approved
+// application is idempotent ("same"); anything else is a conflict message.
+func courierDecision(current string, approve bool) (next string, verdict string) {
+	if approve && current == "approved" {
+		return "approved", "same"
+	}
+	if !courierDecidable[current] {
+		return "", "application is " + current + "; only submitted applications can be decided"
+	}
+	if approve {
+		return "approved", "ok"
+	}
+	return "rejected", "ok"
+}
+
+// listApplications serves the admin review queue with an optional
+// ?status=pending|approved|rejected|frozen|banned filter, free-text ?q=
+// (courier email) and scroll pagination (?page=, ?per_page= default 10,
+// legacy ?limit= alias). Review states filter the application; frozen/banned
+// filter the operational standing (couriers row written by sanctionCourier).
+// Every row carries `standing` so reviewers can spot frozen/banned couriers
+// whose application still reads approved.
 func (s *Server) listApplications(w http.ResponseWriter, r *http.Request) {
 	if !requireRole(w, r, "admin") {
 		return
 	}
-	status := r.URL.Query().Get("status")
+	status, ok := parseReviewStatus(r.URL.Query().Get("status"))
+	if !ok {
+		problem(w, 400, "Validation failed", "status must be pending, approved, rejected, frozen or banned")
+		return
+	}
+	pg := parsePagination(r.URL.Query())
+	pattern, filtered, errMsg := parseSearch(r.URL.Query().Get("q"))
+	if errMsg != "" {
+		problem(w, 400, "Validation failed", errMsg)
+		return
+	}
+	from := `FROM courier_applications a JOIN users u ON u.id=a.user_id
+		LEFT JOIN couriers c ON c.user_id=a.user_id`
+	args := []any{}
+	var where strings.Builder
+	if status == "frozen" || status == "banned" {
+		args = append(args, status)
+		where.WriteString(` WHERE c.status=$` + strconv.Itoa(len(args)))
+	} else if status != "" {
+		args = append(args, status)
+		where.WriteString(` WHERE a.status=$` + strconv.Itoa(len(args)))
+	}
+	if filtered {
+		if len(args) == 0 {
+			where.WriteString(` WHERE `)
+		} else {
+			where.WriteString(` AND `)
+		}
+		args = append(args, pattern)
+		where.WriteString(`u.email ILIKE $` + strconv.Itoa(len(args)) + ` ESCAPE '\'`)
+	}
+	var total int
+	if err := s.db.QueryRow(r.Context(), `SELECT COUNT(*) `+from+where.String(), args...).Scan(&total); err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	pargs := append(append([]any{}, args...), pg.limit, pg.offset)
 	q := `SELECT a.user_id, u.email, a.mode, a.status, a.reject_reason,
 		a.fitness_distance_m, a.fitness_moving_s, a.fitness_elapsed_s, a.fitness_passed,
 		a.fitness_flags, a.fitness_gap_max_s, a.submitted_at, a.updated_at,
+		COALESCE(c.status,'') AS standing,
 		(SELECT count(*) FROM checkpoint_photos cp JOIN activity_sessions s ON s.id=cp.session_id
 			WHERE s.courier_id=a.user_id) AS checkpoints
-		FROM courier_applications a JOIN users u ON u.id=a.user_id`
-	args := []any{}
-	if status != "" {
-		q += ` WHERE a.status=$1`
-		args = append(args, status)
-	}
-	q += ` ORDER BY a.updated_at DESC LIMIT 100`
-	rows, err := s.db.Query(r.Context(), q, args...)
+		` + from + where.String() +
+		` ORDER BY a.updated_at DESC LIMIT $` + strconv.Itoa(len(pargs)-1) + ` OFFSET $` + strconv.Itoa(len(pargs))
+	rows, err := s.db.Query(r.Context(), q, pargs...)
 	if err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
@@ -381,19 +449,20 @@ func (s *Server) listApplications(w http.ResponseWriter, r *http.Request) {
 		var flags []byte
 		var submitted, updated *time.Time
 		var checkpoints int
+		var standing string
 		if err := rows.Scan(&uid, &email, &mode, &st, &reason, &dist, &mov, &ela, &passed,
-			&flags, &gap, &submitted, &updated, &checkpoints); err != nil {
+			&flags, &gap, &submitted, &updated, &standing, &checkpoints); err != nil {
 			continue
 		}
 		var fl []string
 		_ = json.Unmarshal(flags, &fl)
 		out = append(out, map[string]any{"user_id": uid, "email": email, "mode": mode,
-			"status": st, "reject_reason": reason,
+			"status": st, "standing": standing, "reject_reason": reason,
 			"fitness": map[string]any{"distance_m": dist, "moving_s": mov, "elapsed_s": ela,
 				"passed": passed, "flags": fl, "max_gap_s": gap, "checkpoints": checkpoints},
 			"submitted_at": tsOrNil(submitted), "updated_at": tsOrNil(updated)})
 	}
-	writeJSON(w, 200, map[string]any{"applications": out})
+	writePaginatedList(w, "applications", out, pg.page, pg.perPage, total)
 }
 
 func tsOrNil(t *time.Time) any {
@@ -411,19 +480,15 @@ func (s *Server) decideApplication(w http.ResponseWriter, r *http.Request, appro
 	}
 	c := claims(r)
 	userID := r.PathValue("user_id")
-	var b struct {
-		Reason string `json:"reason"`
-		Note   string `json:"note"`
+	if strings.TrimSpace(userID) == "" {
+		problem(w, 400, "Validation failed", "user_id is required")
+		return
 	}
 	// The approve body is optional; an empty POST must still decide.
-	if data, _ := io.ReadAll(r.Body); len(data) > 0 {
-		if err := json.Unmarshal(data, &b); err != nil {
-			problem(w, 400, "Bad request", "invalid JSON body")
-			return
-		}
-	}
-	if !approve && strings.TrimSpace(b.Reason) == "" {
-		problem(w, 400, "Validation failed", "a rejection reason is required")
+	data, _ := io.ReadAll(r.Body)
+	reason, note, msg := parseDecisionBody(data, approve)
+	if msg != "" {
+		problem(w, 400, "Validation failed", msg)
 		return
 	}
 	tx, err := s.db.Begin(r.Context())
@@ -437,30 +502,30 @@ func (s *Server) decideApplication(w http.ResponseWriter, r *http.Request, appro
 		problem(w, 404, "Not found", "application not found")
 		return
 	}
-	if st == "approved" && approve {
+	next, verdict := courierDecision(st, approve)
+	if verdict == "same" {
 		_ = tx.Commit(r.Context())
 		writeJSON(w, 200, map[string]any{"status": "approved"})
 		return
 	}
-	if st != "pending" && st != "pending_review" && st != "passed_test" && !(approve && st == "testing") {
-		problem(w, 409, "Conflict", "application is "+st+"; only pending review can be decided")
+	if verdict != "ok" {
+		problem(w, 409, "Conflict", verdict)
 		return
 	}
 	var email string
 	_ = tx.QueryRow(r.Context(), `SELECT email FROM users WHERE id=$1`, userID).Scan(&email)
-	newStatus := "rejected"
+	newStatus := next
 	title, subj, body := "Application update",
 		"Your Trackfud courier application",
-		fmt.Sprintf("Thanks for applying. This time we could not approve your courier application. Reason: %s. You can apply again in 7 days.", strings.TrimSpace(b.Reason))
+		fmt.Sprintf("Thanks for applying. This time we could not approve your courier application. Reason: %s. You can apply again in 7 days.", reason)
 	if approve {
-		newStatus = "approved"
 		body = "Welcome to Trackfud! Your courier application is approved. Start a session and take orders that fit your workout."
-		if n := strings.TrimSpace(b.Note); n != "" {
-			body += " Note from review: " + n
+		if note != "" {
+			body += " Note from review: " + note
 		}
 	}
 	if _, err := tx.Exec(r.Context(), `UPDATE courier_applications SET status=$2, reject_reason=$3, updated_at=now() WHERE user_id=$1`,
-		userID, newStatus, strings.TrimSpace(b.Reason)); err != nil {
+		userID, newStatus, reason); err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
 	}
@@ -475,23 +540,30 @@ func (s *Server) decideApplication(w http.ResponseWriter, r *http.Request, appro
 	} else {
 		_, _ = tx.Exec(r.Context(), `UPDATE couriers SET status='rejected', updated_at=now() WHERE user_id=$1`, userID)
 	}
-	queueApplicantJobs(r.Context(), tx, userID, email, subj, body, title)
+	s.queueApplicantJobs(r.Context(), tx, userID, email, subj, body, title)
 	if err := tx.Commit(r.Context()); err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
 	}
 	s.hub.Broadcast(userID, fmt.Sprintf(`{"type":"application.status","status":%q}`, newStatus))
+	action := "courier.reject"
+	if approve {
+		action = "courier.approve"
+	}
+	s.writeAudit(r.Context(), r, action, "courier_application", userID, reason,
+		map[string]any{"status": st}, map[string]any{"status": newStatus, "note": note})
 	writeJSON(w, 200, map[string]any{"status": newStatus})
 }
 
-// queueApplicantJobs enqueues the Brevo/Mailpit email (demo outbox) + push.
-func queueApplicantJobs(ctx context.Context, tx pgx.Tx, userID, email, subject, body, title string) {
+// queueApplicantJobs enqueues the Brevo/Mailpit email (demo outbox) + push
+// in the caller's transaction via River InsertTx.
+func (s *Server) queueApplicantJobs(ctx context.Context, tx pgx.Tx, userID, email, subject, body, title string) {
 	if email != "" {
-		_, _ = tx.Exec(ctx, `INSERT INTO jobs(kind,payload) VALUES('email_send',$1)`,
-			fmt.Sprintf(`{"to":%q,"subject":%q,"body":%q}`, email, subject, body))
+		_ = s.enqueueTx(ctx, tx, JobEmailSend,
+			fmt.Sprintf(`{"to":%q,"subject":%q,"body":%q}`, email, subject, body), time.Now())
 	}
-	_, _ = tx.Exec(ctx, `INSERT INTO jobs(kind,payload) VALUES('push_send',$1)`,
-		fmt.Sprintf(`{"user_id":%q,"title":%q,"body":%q}`, userID, title, body))
+	_ = s.enqueueTx(ctx, tx, JobPushSend,
+		fmt.Sprintf(`{"user_id":%q,"title":%q,"body":%q}`, userID, title, body), time.Now())
 }
 
 // listSanctions shows the sanction history of a courier.
@@ -520,6 +592,25 @@ func (s *Server) listSanctions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"sanctions": out})
 }
 
+// sanctionReasonOK reports whether the reason satisfies the kind's audit
+// rule: freeze and ban always need a reason; unfreeze lifts a sanction and
+// may carry an empty one — the history row still records who acted and when.
+// This mirrors the merchant side, where unban needs no reason.
+func sanctionReasonOK(kind, reason string) bool {
+	if kind == "unfreeze" {
+		return true
+	}
+	return strings.TrimSpace(reason) != ""
+}
+
+// workSessionBlocked reports whether an operational standing may not go
+// online (plan 8.4): frozen couriers cannot start work sessions, and banned
+// couriers are off the platform. Ordinary runners/bikers without a couriers
+// row (empty standing) track for free and are never blocked here.
+func workSessionBlocked(standing string) bool {
+	return standing == "frozen" || standing == "banned"
+}
+
 // sanctionCourier freezes/unfreezes/bans a courier (human decision only);
 // money already earned stays withdrawable (plan 8.4).
 func (s *Server) sanctionCourier(w http.ResponseWriter, r *http.Request) {
@@ -541,8 +632,8 @@ func (s *Server) sanctionCourier(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "Validation failed", "kind must be freeze, unfreeze or ban")
 		return
 	}
-	if strings.TrimSpace(b.ReasonCode) == "" {
-		problem(w, 400, "Validation failed", "reason_code is required and is audit-logged")
+	if !sanctionReasonOK(b.Kind, b.ReasonCode) {
+		problem(w, 400, "Validation failed", "reason_code is required for freeze and ban and is audit-logged")
 		return
 	}
 	var endsAt any
@@ -594,11 +685,13 @@ func (s *Server) sanctionCourier(w http.ResponseWriter, r *http.Request) {
 		"unfreeze": "Your courier account is active again. Thanks for your patience.",
 		"ban":      "Your courier account is permanently closed: " + b.ReasonCode + ". Money you earned stays withdrawable unless on fraud hold.",
 	}[b.Kind]
-	queueApplicantJobs(r.Context(), tx, userID, email, "Your Trackfud courier account", msg, "Account update")
+	s.queueApplicantJobs(r.Context(), tx, userID, email, "Your Trackfud courier account", msg, "Account update")
 	if err := tx.Commit(r.Context()); err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
 	}
 	s.hub.Broadcast(userID, fmt.Sprintf(`{"type":"courier.status","status":%q}`, next))
+	s.writeAudit(r.Context(), r, "courier."+b.Kind, "courier", userID, strings.TrimSpace(b.ReasonCode),
+		map[string]any{"status": st}, map[string]any{"status": next, "note": strings.TrimSpace(b.Note)})
 	writeJSON(w, 200, map[string]any{"status": next})
 }

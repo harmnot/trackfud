@@ -22,15 +22,45 @@ const (
 	IntentUnknown VoiceIntent = "unknown"
 )
 
+// voicePatterns is the one vocabulary source for both the local parser and
+// ASR keyword biasing. Each row pairs the intent regex (mirrors the PWA
+// parser) with the literal command words it accepts; VoiceKeywords hands
+// those words to the transcriber so short EN/ID commands ("terima",
+// "tolak") transcribe cleanly. TestVoiceKeywordsParse keeps every keyword
+// parsing back to its own intent, so the two cannot drift apart.
 var voicePatterns = []struct {
-	re     *regexp.Regexp
-	intent VoiceIntent
+	re       *regexp.Regexp
+	intent   VoiceIntent
+	keywords []string
 }{
-	{regexp.MustCompile(`\b(accept|accepts|accepted|take it|take order|yes|yeah|ok(ay)? go|gas|terima|ya|iya|ambil|oke gas)\b`), IntentAccept},
-	{regexp.MustCompile(`\b(decline|reject|no thanks?|skip|no\b.*offer|tolak|tidak|nggak|enggak|nanti (aja|dulu))\b`), IntentDecline},
-	{regexp.MustCompile(`\b(how far|how long|distance|jarak|berapa (jauh|jarak|lama)|tinggal berapa|where.*(pickup|resto|merchant)|di mana.*resto)\b`), IntentHowFar},
-	{regexp.MustCompile(`\b(2\s?min|two min|almost (there|here)|arriving|on my way|otw|sampai|dua menit|sebentar lagi|hampir sampai|mau sampai)\b`), IntentEtaSoon},
-	{regexp.MustCompile(`\b(repeat|again|say again|sekali lagi|ulangi|ulang)\b`), IntentRepeat},
+	{regexp.MustCompile(`\b(accept|accepts|accepted|take it|take order|yes|yeah|ok(ay)? go|gas|terima|ya|iya|ambil|oke gas)\b`), IntentAccept,
+		[]string{"accept", "take order", "terima", "ambil", "oke gas"}},
+	{regexp.MustCompile(`\b(decline|reject|no thanks?|skip|no\b.*offer|tolak|tidak|nggak|enggak|nanti (aja|dulu))\b`), IntentDecline,
+		[]string{"decline", "reject", "skip", "tolak", "nggak", "nanti dulu"}},
+	{regexp.MustCompile(`\b(how far|how long|distance|jarak|berapa (jauh|jarak|lama)|tinggal berapa|where.*(pickup|resto|merchant)|di mana.*resto)\b`), IntentHowFar,
+		[]string{"how far", "distance", "jarak", "berapa jauh", "tinggal berapa"}},
+	{regexp.MustCompile(`\b(2\s?min|two min|almost (there|here)|arriving|on my way|otw|sampai|dua menit|sebentar lagi|hampir sampai|mau sampai)\b`), IntentEtaSoon,
+		[]string{"on my way", "almost there", "otw", "dua menit", "sebentar lagi", "hampir sampai"}},
+	{regexp.MustCompile(`\b(repeat|again|say again|sekali lagi|ulangi|ulang)\b`), IntentRepeat,
+		[]string{"repeat", "say again", "ulangi", "sekali lagi"}},
+}
+
+// VoiceKeywords returns the voice-command vocabulary (EN + ID) for ASR
+// keyword biasing, in parser order without duplicates. It is derived from
+// voicePatterns, so biasing only ever favors words the parser understands.
+// The slice is a fresh copy; callers may keep or modify it.
+func VoiceKeywords() []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, p := range voicePatterns {
+		for _, k := range p.keywords {
+			if !seen[k] {
+				seen[k] = true
+				out = append(out, k)
+			}
+		}
+	}
+	return out
 }
 
 // NormalizeTranscript lowercases and depunctuates one transcript line.

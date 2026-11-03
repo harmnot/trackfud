@@ -1,12 +1,14 @@
 /**
  * Voice Copilot server relay (B6): WebSocket to `GET /courier/voice`
  * with a single-use `?ticket=` from `POST /ws/ticket`. Binary frames
- * carry 24 kHz Int16 mono PCM; the text frame `{"type":"voice.end"}`
- * closes one utterance. Server replies are `voice.intent` frames with a
+ * carry 24 kHz Int16 mono PCM; the text frame `{"type":"voice.end","lang"}`
+ * closes one utterance (`lang` = current UI language, the server's
+ * transcription hint). Server replies are `voice.intent` frames with a
  * signed `confirmation` that `POST /courier/voice/confirm` executes.
  * The local EN+ID parser in `voiceCommands` stays as the no-key/offline
  * fallback — this relay never replaces it, only precedes it.
  */
+import i18n from '../../i18n';
 import { api } from '../../lib/api';
 import { logger } from '../../lib/logger';
 import type { VoiceIntentFrame } from '../delivery/courierApi';
@@ -36,6 +38,7 @@ function parseIntent(data: string): VoiceIntentFrame | null {
     offer_id: typeof o['offer_id'] === 'string' ? o['offer_id'] : null,
     confirmation: typeof o['confirmation'] === 'string' ? o['confirmation'] : null,
     live: o['live'] === true,
+    transcript: typeof o['transcript'] === 'string' ? o['transcript'] : '',
   };
 }
 
@@ -50,6 +53,19 @@ class VoiceRelay {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
+  /** WS(S) URL for the voice relay, honouring `VITE_API_BASE` (same-origin
+   * `/api/v1` in production, absolute URL in custom deploys). */
+  private voiceUrl(ticket: string): string {
+    const base = ((import.meta.env.VITE_API_BASE as string | undefined) ?? '/api/v1').replace(/\/$/, '');
+    if (/^https?:\/\//i.test(base)) {
+      const u = new URL(base);
+      const proto = u.protocol === 'https:' ? 'wss' : 'ws';
+      return `${proto}://${u.host}${u.pathname.replace(/\/$/, '')}/courier/voice?ticket=${encodeURIComponent(ticket)}`;
+    }
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    return `${proto}://${location.host}${base}/courier/voice?ticket=${encodeURIComponent(ticket)}`;
+  }
+
   /** Open the relay (idempotent); false when no ticket or no route. */
   async connect(callbacks: RelayCallbacks): Promise<boolean> {
     this.callbacks = callbacks;
@@ -57,8 +73,7 @@ class VoiceRelay {
     this.connecting = true;
     try {
       const res = await api<{ ticket: string }>('/ws/ticket', { method: 'POST' });
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const url = `${proto}://${location.host}/api/v1/courier/voice?ticket=${encodeURIComponent(res.ticket)}`;
+      const url = this.voiceUrl(res.ticket);
       const ws = new WebSocket(url);
       this.ws = ws;
       const opened = await new Promise<boolean>((resolve) => {
@@ -104,11 +119,13 @@ class VoiceRelay {
     }
   }
 
-  /** Close the current utterance so the server transcribes + replies. */
+  /** Close the current utterance so the server transcribes + replies. The
+   * UI language rides on every utterance (not the connect URL) so a switch
+   * in the top-bar picker applies without reopening the relay. */
   endUtterance(): void {
     if (!this.open || !this.ws) return;
     try {
-      this.ws.send(JSON.stringify({ type: 'voice.end' }));
+      this.ws.send(JSON.stringify({ type: 'voice.end', lang: i18n.resolvedLanguage ?? i18n.language }));
     } catch (err) {
       logger.warn('voice end failed', err);
     }

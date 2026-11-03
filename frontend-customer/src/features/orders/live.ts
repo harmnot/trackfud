@@ -1,16 +1,28 @@
-/** Live order-status channel: WS ticket connect, typed `order.status` fan-out.
- * Reconnects with backoff; never reloads the page (no silent SW reload mid-order). */
+/** Live order channel: WS ticket connect, typed `order.status` and
+ * `courier.location` fan-out. Reconnects with backoff; never reloads the page
+ * (no silent SW reload mid-order). */
 
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { wsTicket } from '../../lib/api';
 import { logger } from '../../lib/logger';
-import { parseWsOrderStatus } from './types';
+import { orderKey } from './hooks';
+import {
+  applyCourierFix,
+  parseWsCourierLocation,
+  parseWsOrderStatus,
+  type OrderDetail,
+  type WsCourierLocation,
+} from './types';
 
 const RETRY_MS = [1000, 2000, 5000, 10000, 30000];
 
-/** Open one WS session and invoke `onStatus` for every `order.status` message. */
-export function connectLiveOrders(args: { onStatus: (orderId: string, status: string) => void }): () => void {
+/** Open one WS session: `onStatus` fires for every `order.status` frame and
+ * `onCourierLocation` (when given) for every `courier.location` frame. */
+export function connectLiveOrders(args: {
+  onStatus: (orderId: string, status: string) => void;
+  onCourierLocation?: (fix: WsCourierLocation) => void;
+}): () => void {
   let closed = false;
   let attempt = 0;
   let socket: WebSocket | null = null;
@@ -25,7 +37,12 @@ export function connectLiveOrders(args: { onStatus: (orderId: string, status: st
       return;
     }
     const msg = parseWsOrderStatus(data);
-    if (msg) args.onStatus(msg.order_id, msg.status);
+    if (msg) {
+      args.onStatus(msg.order_id, msg.status);
+      return;
+    }
+    const fix = parseWsCourierLocation(data);
+    if (fix) args.onCourierLocation?.(fix);
   }
 
   function connect() {
@@ -64,15 +81,29 @@ export function connectLiveOrders(args: { onStatus: (orderId: string, status: st
   };
 }
 
-/** Subscribe the react-query cache to live `order.status` pushes for one order. */
-export function useLiveOrderStatus(args: { orderId: string }): void {
+/** Keep one order's react-query cache live: `order.status` frames refetch
+ * the detail; `courier.location` frames move `delivery.courierLast` in place
+ * at once (no refetch). Frames for other orders are ignored, and the 10 s
+ * poll in `useOrder` stays the fallback. */
+export function useLiveOrder(args: { orderId: string }): void {
   const qc = useQueryClient();
   useEffect(() => {
+    const key = orderKey(args.orderId);
     return connectLiveOrders({
       onStatus: (orderId, status) => {
         if (orderId !== args.orderId) return;
         logger.info('live order status', { orderId, status });
-        void qc.invalidateQueries({ queryKey: ['order', args.orderId] });
+        void qc.invalidateQueries({ queryKey: key });
+      },
+      onCourierLocation: (fix) => {
+        if (fix.orderId !== args.orderId) return;
+        const state = qc.getQueryState<OrderDetail>(key);
+        if (!state?.data) return;
+        const next = applyCourierFix({ detail: state.data, fix });
+        if (next === state.data) return;
+        // Keep `dataUpdatedAt` on the last server fetch: a WS dot is not a
+        // full sync, and the poll countdown (`useOrder`) reads that clock.
+        qc.setQueryData<OrderDetail>(key, next, { updatedAt: state.dataUpdatedAt });
       },
     });
   }, [args.orderId, qc]);

@@ -16,6 +16,20 @@ type Props = {
   demoLabel: string;
   onAccept: () => void;
   onDecline: () => void;
+  /**
+   * Hands-free answer while moving: the full-screen overlay hides the Voice
+   * Copilot panel, so the card carries its own hold-to-talk toggle.
+   * Omitted when the device has no microphone support.
+   */
+  voice?: {
+    listening: boolean;
+    holdLabel: string;
+    releaseLabel: string;
+    heardLabel: string;
+    heard: string | null;
+    onHold: () => void;
+    onRelease: () => void;
+  };
 };
 
 /** Offer card overlay. Timer is informative only — no rush while moving. */
@@ -37,7 +51,7 @@ export function OfferCard(props: Props) {
         )}
       </p>
       <p className="tb-offer-meta">
-        {props.offer.sizeClass} · {props.offer.spillRisk} spill · 30–60 min promise
+        {props.offer.sizeClass} · 30–60 min promise
       </p>
       <progress
         className={`tb-offer-timer${props.secondsLeft <= 10 ? ' tb-offer-timer-low' : ''}`}
@@ -53,7 +67,22 @@ export function OfferCard(props: Props) {
         <Button variant="soft" block onClick={props.onDecline}>
           {props.declineLabel}
         </Button>
+        {props.voice && (
+          <Button
+            variant={props.voice.listening ? 'danger' : 'soft'}
+            block
+            onClick={props.voice.listening ? props.voice.onRelease : props.voice.onHold}
+          >
+            <span aria-hidden>{props.voice.listening ? '●' : '🎙'}</span>{' '}
+            {props.voice.listening ? props.voice.releaseLabel : props.voice.holdLabel}
+          </Button>
+        )}
       </div>
+      {props.voice?.heard && (
+        <p className="tb-sub mt-2" role="status">
+          {props.voice.heardLabel}: “{props.voice.heard}”
+        </p>
+      )}
       <p className="tb-sub">{props.noPenalty}</p>
     </section>
   );

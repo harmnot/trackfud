@@ -26,6 +26,15 @@ export function savedUser(): User | null {
     }
 }
 
+/** Auth paths that never trigger a refresh (same allowlist as the CMS app):
+ * everything else retries once after refreshing the access token, so a
+ * boot-time `GET /auth/me` with an expired token still recovers. */
+const NO_REFRESH = ["/auth/login", "/auth/refresh", "/auth/logout", "/auth/signup", "/auth/demo-login"];
+
+function needsRefresh(path: string): boolean {
+    return !NO_REFRESH.some((p) => path === p || path.startsWith(`${p}?`));
+}
+
 async function raw(
     path: string,
     init: RequestInit,
@@ -40,7 +49,7 @@ async function raw(
         headers,
         credentials: "include",
     });
-    if (res.status === 401 && retry && !path.startsWith("/auth/")) {
+    if (res.status === 401 && retry && needsRefresh(path)) {
         const rr = await fetch(`${BASE}/auth/refresh?app=${APP}`, {
             method: "POST",
             headers: { "X-TF-App": APP },
@@ -72,4 +81,19 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
+}
+
+/** Server sign-out: clears the HttpOnly per-app refresh cookie so a copied
+ * token can't be refreshed afterwards. Best-effort: offline logout still
+ * clears local state via the caller's `setSession(null)`. */
+export async function logout(): Promise<void> {
+    try {
+        // Touch a refreshable endpoint first so an expired access token is
+        // renewed from the cookie before sign-out; otherwise the POST below
+        // 401s and the refresh cookie survives.
+        await api<unknown>("/auth/me");
+        await api<void>("/auth/logout", { method: "POST" });
+    } catch {
+        /* local sign-out proceeds regardless */
+    }
 }

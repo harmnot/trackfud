@@ -6,17 +6,17 @@
 
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, savedUser } from '../../lib/api';
 import { formatMoney } from '../../lib/format';
 import { logger } from '../../lib/logger';
 import { useCart } from '../../lib/store';
-import { Button, Note, Page, Skeleton, Tag } from '../../components/ui';
+import { Button, Note, Page, Radio, RadioGroup, Skeleton, Tag } from '../../components/ui';
 import i18n from '../../i18n';
 import { getActiveId, getActiveLoc } from '../addresses/active';
 import { listAddresses } from '../addresses/api';
-import { getWallet } from './api';
+import { fetchOrder, getWallet } from './api';
 import { estimateQuote, haversineKm, mulBps } from './quote';
 import { PayError, payWithCard, payWithWallet, type PayMethod } from './pay';
 
@@ -44,8 +44,17 @@ export function CheckoutPage() {
   const [method, setMethod] = useState<PayMethod>('wallet');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
   const [addressId, setAddressId] = useState<string | null>(() => getActiveId());
   const user = savedUser();
+  const qc = useQueryClient();
+
+  /** Refresh wallet + order caches after money moved server-side. */
+  async function refreshMoney(): Promise<void> {
+    await qc.invalidateQueries({ queryKey: ['wallet'] });
+    await qc.invalidateQueries({ queryKey: ['orders'] });
+  }
 
   const shop = useQuery({
     queryKey: ['restaurant', merchantId],
@@ -111,6 +120,9 @@ export function CheckoutPage() {
               tipMinor: quote.tipMinor,
             });
         clear();
+        // Wallet pay deducts the total into escrow on the server; refresh
+        // the cached balance so it shows the hold at once.
+        await refreshMoney();
         nav(`/order/${order.id}`);
         return;
       }
@@ -122,11 +134,16 @@ export function CheckoutPage() {
       if (result.kind === 'placed') {
         logger.info('card order placed', { id: result.order.id });
         clear();
+        await refreshMoney();
         nav(`/order/${result.order.id}`);
         return;
       }
       if (result.kind === 'card_authorized') {
+        // The overlay closed but the Paddle webhook has not placed the order
+        // yet: keep the order id so the customer can check status instead of
+        // paying twice.
         logger.info('card authorized, webhook places the order', { id: result.transactionId });
+        setPendingOrderId(result.orderId);
         setError(t('checkout.cardPending'));
       }
     } catch (err) {
@@ -208,10 +225,11 @@ export function CheckoutPage() {
           <div className="flex flex-col gap-2 mt-2" role="radiogroup" aria-label={t('checkout.deliverTo')}>
             {(addresses.data ?? []).map((a) => (
               <label key={a.id} className={`tb-addr${activeAddress?.id === a.id ? ' on' : ''}`}>
-                <input
-                  type="radio"
+                <Radio
                   name="checkout-address"
+                  value={a.id}
                   checked={activeAddress?.id === a.id}
+                  ariaLabel={t('checkout.deliverTo')}
                   onChange={() => setAddressId(a.id)}
                 />
                 <span className="tb-addr-body">
@@ -264,32 +282,61 @@ export function CheckoutPage() {
       )}
       <section aria-label={t('checkout.tip')} className="mt-3">
         <h2 className="tb-h2">{t('checkout.tip')}</h2>
-        <div className="tb-chips mt-2" role="radiogroup" aria-label={t('checkout.tip')}>
-          {TIP_PCTS.map((pct) => (
-            <button
-              key={pct}
-              role="radio"
-              aria-checked={tipPct === pct}
-              className={`tb-chip${tipPct === pct ? ' on' : ''}`}
-              onClick={() => setTipPct(pct)}
-            >
-              {pct === 0 ? t('checkout.noTip') : `${pct}%`}
-            </button>
-          ))}
+        <div className="mt-2">
+          <RadioGroup
+            name="checkout-tip"
+            ariaLabel={t('checkout.tip')}
+            value={String(tipPct)}
+            onChange={(v) => setTipPct(Number(v))}
+            options={TIP_PCTS.map((pct) => ({ value: String(pct), label: pct === 0 ? t('checkout.noTip') : `${pct}%` }))}
+          />
         </div>
       </section>
       <section aria-label={t('checkout.method')} className="mt-3">
         <h2 className="tb-h2">{t('checkout.method')}</h2>
-        <div className="tb-chips mt-2" role="radiogroup" aria-label={t('checkout.method')}>
-          <button role="radio" aria-checked={method === 'wallet'} className={`tb-chip${method === 'wallet' ? ' on' : ''}`} onClick={() => setMethod('wallet')}>
-            {t('checkout.wallet')}
-          </button>
-          <button role="radio" aria-checked={method === 'card'} className={`tb-chip${method === 'card' ? ' on' : ''}`} onClick={() => setMethod('card')}>
-            {t('checkout.card')}
-          </button>
+        <div className="mt-2">
+          <RadioGroup
+            name="checkout-method"
+            ariaLabel={t('checkout.method')}
+            value={method}
+            onChange={(v) => setMethod(v as PayMethod)}
+            options={[
+              { value: 'wallet', label: t('checkout.wallet') },
+              { value: 'card', label: t('checkout.card') },
+            ]}
+          />
         </div>
       </section>
       {error && <div className="mt-3"><Note tone="error">{error}</Note></div>}
+      {pendingOrderId && (
+        <div className="mt-3 flex flex-col gap-2">
+          <Button
+            variant="soft"
+            block
+            disabled={checking}
+            onClick={() => void (async () => {
+              setChecking(true);
+              try {
+                const detail = await fetchOrder({ id: pendingOrderId });
+                if (detail.order.status !== 'awaiting_payment') {
+                  clear();
+                  await refreshMoney();
+                  nav(`/order/${detail.order.id}`);
+                  return;
+                }
+                setError(t('checkout.cardPending'));
+              } catch (err) {
+                setError(err instanceof Error ? err.message : t('common.error'));
+              } finally {
+                setChecking(false);
+              }
+            })()}
+          >
+            {checking ? '…' : t('checkout.checkStatus')}
+          </Button>
+        </div>
+      )}
+      <div className="mt-3"><Note tone="info">{t('checkout.pinNote')}</Note></div>
       <div className="mt-3 flex flex-col gap-2">
         <Button variant="ember" block disabled={busy || !quote || (method === 'wallet' && short)} onClick={() => void pay()}>
           {busy ? '…' : t('checkout.payNow')}

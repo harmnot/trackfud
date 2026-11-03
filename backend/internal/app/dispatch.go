@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"Trackfud/internal/config"
 	"Trackfud/internal/ledger"
 	"Trackfud/internal/maps"
 	"Trackfud/internal/order"
@@ -46,10 +47,10 @@ var ErrDeliveryTaken = errors.New("dispatch: delivery already taken")
 
 // dispatchCandidatesSQL finds couriers whose live session can take the
 // order: near the restaurant (or its planned track), trip in range,
-// size/spill allowed, no active delivery, never offered for this delivery.
+// size allowed, no active delivery, never offered for this delivery.
 const dispatchCandidatesSQL = `
 WITH o AS (
-  SELECT o.id, o.dropoff, o.size_class, o.spill_risk, m.location AS pickup
+  SELECT o.id, o.dropoff, o.size_class, m.location AS pickup
   FROM orders o JOIN merchants m ON m.id = o.merchant_id
   WHERE o.id = $1
 )
@@ -76,18 +77,121 @@ WHERE s.kind = 'work' AND s.status = 'active'
       AND ST_DWithin(s.last_pos, o.pickup, $3)
       AND ST_DWithin(o.pickup, o.dropoff, $4)
       AND o.size_class = ANY(string_to_array($5, ','))
-      AND o.spill_risk = ANY(string_to_array($6, ','))
-      AND (s.planned_track IS NULL OR ST_DWithin(s.planned_track, o.pickup, $7)))
+      AND (s.planned_track IS NULL OR ST_DWithin(s.planned_track, o.pickup, $6)))
     OR
     (c.mode = 'biker'
-      AND ST_DWithin(s.last_pos, o.pickup, $8)
-      AND ST_DWithin(o.pickup, o.dropoff, $9)
-      AND o.size_class = ANY(string_to_array($10, ','))
-      AND o.spill_risk = ANY(string_to_array($11, ','))
-      AND (s.planned_track IS NULL OR ST_DWithin(s.planned_track, o.pickup, $12)))
+      AND ST_DWithin(s.last_pos, o.pickup, $7)
+      AND ST_DWithin(o.pickup, o.dropoff, $8)
+      AND o.size_class = ANY(string_to_array($9, ','))
+      AND (s.planned_track IS NULL OR ST_DWithin(s.planned_track, o.pickup, $10)))
   )
 ORDER BY to_pickup_m
 LIMIT 20`
+
+// restartCourierSearchSQL flips an unclaimed delivery back into the
+// courier-first search. The guard is the whole safety story: a delivery a
+// courier already claimed (courier_id set, or past 'assigned') can never be
+// pulled back, so one order stays with one courier until delivered.
+const restartCourierSearchSQL = `
+UPDATE deliveries SET status='searching', search_started_at=now()
+WHERE id=$1 AND status = ANY($2) AND courier_id IS NULL
+RETURNING order_id`
+
+// canRestartCourierSearch reports whether a delivery may (re)enter the
+// courier-first search wave: nobody has claimed it and it is not already
+// being carried to the customer. Pure, so the ready-wave rule is
+// unit-testable without a database.
+func canRestartCourierSearch(status string, hasCourier bool) bool {
+	if hasCourier {
+		return false
+	}
+	switch status {
+	case DeliverySearching, DeliveryOffered, DeliveryStaffSearch, DeliveryNoCourier:
+		return true
+	}
+	return false
+}
+
+// searchWindow resolves the courier search window for one order. The CMS
+// settings editor (A9) wins over config.yaml, so the accept wave, the
+// food-ready wave, and the customer's wait-more wave all time out on the
+// same clock.
+func (s *Server) searchWindow(ctx context.Context, orderID string) time.Duration {
+	return time.Duration(s.effectiveDispatch(ctx, s.merchantCountryForOrder(ctx, orderID)).SearchS) * time.Second
+}
+
+// restartCourierSearch starts a fresh courier-first wave for an unclaimed
+// delivery and returns true when this call won the flip.
+//
+// Why a fresh wave exists at all: the accept-time wave lives only
+// searchWindow (default 4 min) while kitchens typically cook ~15 min, so by
+// the time the merchant taps "ready" the first wave is usually dead in
+// staff/no-courier land and nobody nearby ever hears about the order. The
+// ready tap is dispatch's strongest signal — food is packed, couriers close
+// to the kitchen right now get real offers (WS offer.created + push).
+//
+// Offer rows from earlier waves are expired then deleted: the
+// UNIQUE(delivery_id, courier_id) constraint and the candidate query's
+// never-offered exclusion would otherwise bar every previously-offered
+// courier from this wave forever (declining still never penalizes scoring —
+// it only removes the courier from the current wave).
+func (s *Server) restartCourierSearch(ctx context.Context, deliveryID string, foodReady bool) bool {
+	d, err := s.loadDelivery(ctx, deliveryID)
+	if err != nil || !canRestartCourierSearch(d.Status, d.CourierID != nil) {
+		return false
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return false
+	}
+	defer tx.Rollback(ctx)
+	var orderID string
+	err = tx.QueryRow(ctx, restartCourierSearchSQL, deliveryID,
+		[]string{DeliverySearching, DeliveryOffered, DeliveryStaffSearch, DeliveryNoCourier}).Scan(&orderID)
+	if err != nil {
+		// Lost the race (claimed or moved on between load and update).
+		return false
+	}
+	if _, err := tx.Exec(ctx, `UPDATE dispatch_offers SET status='expired'
+		WHERE delivery_id=$1 AND status='pending'`, deliveryID); err != nil {
+		return false
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM dispatch_offers
+		WHERE delivery_id=$1 AND status IN ('expired','declined')`, deliveryID); err != nil {
+		return false
+	}
+	now := time.Now()
+	if err := s.enqueueTx(ctx, tx, "search_timeout", fmt.Sprintf(`{"delivery_id":%q}`, deliveryID),
+		now.Add(s.searchWindow(ctx, orderID))); err != nil {
+		return false
+	}
+	if err := s.enqueueTx(ctx, tx, "dispatch_run", fmt.Sprintf(`{"delivery_id":%q}`, deliveryID), now); err != nil {
+		return false
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false
+	}
+	o, err := s.loadOrder(ctx, orderID)
+	if err != nil {
+		return true
+	}
+	// Everyone hears about the new wave on the typed frames they already
+	// parse: order.status (delivery_status=searching) to customer, merchant
+	// owner, and — once claimed — the courier; offers go out in runCascade.
+	s.broadcastOrder(ctx, o.CustomerID, o.MerchantID, orderID, o.Status)
+	if foodReady {
+		s.queuePush(o.CustomerID, "Food is ready",
+			"Your food is packed — we're offering it to couriers near the kitchen right now.")
+		var ownerID string
+		_ = s.db.QueryRow(ctx, `SELECT owner_id FROM merchants WHERE id=$1`, o.MerchantID).Scan(&ownerID)
+		if ownerID != "" {
+			s.queuePush(ownerID, "Finding a courier",
+				fmt.Sprintf("Order %s is ready — nearby runners and bikers are being offered it now.", o.Code))
+		}
+	}
+	s.runCascade(ctx, deliveryID)
+	return true
+}
 
 // claimDeliverySQL is the atomic accept: exactly one courier can win it.
 // 0 rows means "sorry, someone else took it" (or the search moved on).
@@ -345,26 +449,46 @@ func scanOffer(r pgx.Row) (offerRow, error) {
 	return o, err
 }
 
-// ---------- job enqueue helpers (same-tx or post-commit) ----------
+// ---------- job enqueue helpers (River; same-tx or post-commit) ----------
 
-func enqueueTx(ctx context.Context, tx pgx.Tx, kind, payload string, runAt time.Time) error {
-	_, err := tx.Exec(ctx, `INSERT INTO jobs(kind,payload,run_at) VALUES($1,$2,$3)`, kind, payload, runAt)
-	return err
+// enqueueTx inserts a job in the caller's transaction: the state change,
+// order_events row, ledger postings and the job commit atomically, so a
+// crash never loses a timeout or nudge. River's InsertTx runs inside tx.
+func (s *Server) enqueueTx(ctx context.Context, tx pgx.Tx, kind, payload string, runAt time.Time) error {
+	if s.rq == nil {
+		return fmt.Errorf("river: worker not initialized (kind %s)", kind)
+	}
+	args, err := riverJobArgs(kind, payload)
+	if err != nil {
+		return err
+	}
+	_, err = s.rq.InsertTx(ctx, tx, args, riverInsertOpts(kind, runAt))
+	if err != nil {
+		return fmt.Errorf("river: insert %s: %w", kind, err)
+	}
+	return nil
 }
 
 func (s *Server) enqueueNow(kind, payload string, runAt time.Time) {
-	_, _ = s.db.Exec(context.Background(), `INSERT INTO jobs(kind,payload,run_at) VALUES($1,$2,$3)`, kind, payload, runAt)
+	if s.rq == nil {
+		s.log.Warn("river: dropped job, worker not initialized", "kind", kind)
+		return
+	}
+	args, err := riverJobArgs(kind, payload)
+	if err != nil {
+		s.log.Warn("river: bad payload", "kind", kind, "err", err)
+		return
+	}
+	if _, err := s.rq.Insert(context.Background(), args, riverInsertOpts(kind, runAt)); err != nil {
+		s.log.Warn("river: insert failed", "kind", kind, "err", err)
+	}
 }
 
-// enqueueUnlessPending inserts a retry-style job only when no pending one
-// for the same delivery exists, so GPS-speed callers cannot spam the queue.
+// enqueueUnlessPending inserts a retry-style job; River's ByArgs uniqueness
+// (see riverUniqueOpts) collapses duplicates per kind+delivery, so GPS-speed
+// callers cannot spam the queue.
 func (s *Server) enqueueUnlessPending(kind, deliveryID string, runAt time.Time) {
-	var n int
-	_ = s.db.QueryRow(context.Background(), `SELECT count(*) FROM jobs
-		WHERE kind=$1 AND status='pending' AND payload->>'delivery_id'=$2`, kind, deliveryID).Scan(&n)
-	if n == 0 {
-		s.enqueueNow(kind, fmt.Sprintf(`{"delivery_id":%q}`, deliveryID), runAt)
-	}
+	s.enqueueNow(kind, fmt.Sprintf(`{"delivery_id":%q}`, deliveryID), runAt)
 }
 
 func pushPayload(userID, title, body string) string {
@@ -378,13 +502,14 @@ func (s *Server) queuePush(userID, title, body string) {
 // ---------- candidates + cascade ----------
 
 // fetchCandidates runs the PostGIS corridor query with config limits.
+// A9: corridor and size limits follow the CMS settings editor.
 func (s *Server) fetchCandidates(ctx context.Context, orderID, deliveryID string) ([]Candidate, error) {
-	d := s.cfg.Dispatch
+	d := s.effectiveDispatch(ctx, s.merchantCountryForOrder(ctx, orderID))
 	rows, err := s.db.Query(ctx, dispatchCandidatesSQL, orderID, deliveryID,
 		d.RunnerMaxToPickupM, d.RunnerMaxTripM,
-		strings.Join(d.RunnerSizes, ","), strings.Join(d.RunnerSpill, ","), d.RunnerCorridorM,
+		strings.Join(d.RunnerSizes, ","), d.RunnerCorridorM,
 		d.BikerMaxToPickupM, d.BikerMaxTripM,
-		strings.Join(d.BikerSizes, ","), strings.Join(d.BikerSpill, ","), d.BikerCorridorM)
+		strings.Join(d.BikerSizes, ","), d.BikerCorridorM)
 	if err != nil {
 		return nil, err
 	}
@@ -407,8 +532,9 @@ func (s *Server) fetchCandidates(ctx context.Context, orderID, deliveryID string
 }
 
 // scoreCtxFor builds the scoring context for one order + courier mode.
-func (s *Server) scoreCtxFor(o orderRow, mode string, pickupLat, pickupLng float64) ScoreCtx {
-	d := s.cfg.Dispatch
+// The dispatch values come from the caller so one effective resolution
+// (A9 settings editor) covers the whole cascade step.
+func (s *Server) scoreCtxFor(o orderRow, mode string, pickupLat, pickupLng float64, d config.Dispatch) ScoreCtx {
 	ctx := ScoreCtx{
 		Now: time.Now(), PickupLat: pickupLat, PickupLng: pickupLng,
 		W: ScoreWeights{Fit: d.WFit, FoodWait: d.WFoodWait, Rating: d.WRating, Idle: d.WIdle,
@@ -446,7 +572,9 @@ func (s *Server) runCascade(ctx context.Context, deliveryID string) {
 		return
 	}
 	now := time.Now()
-	if d.SearchStartedAt != nil && now.After(d.SearchStartedAt.Add(time.Duration(s.cfg.Dispatch.SearchS)*time.Second)) {
+	// A9: search/offer timing follows the CMS settings editor.
+	ed := s.effectiveDispatch(ctx, s.merchantCountryForOrder(ctx, d.OrderID))
+	if d.SearchStartedAt != nil && now.After(d.SearchStartedAt.Add(time.Duration(ed.SearchS)*time.Second)) {
 		s.moveToStaffSearch(ctx, deliveryID)
 		return
 	}
@@ -471,7 +599,7 @@ func (s *Server) runCascade(ctx context.Context, deliveryID string) {
 	// Score per mode (planning speed + carry cap differ).
 	ranked := []ScoredCandidate{}
 	for _, c := range cands {
-		ranked = append(ranked, RankCandidates([]Candidate{c}, s.scoreCtxFor(o, c.Mode, plat, plng))...)
+		ranked = append(ranked, RankCandidates([]Candidate{c}, s.scoreCtxFor(o, c.Mode, plat, plng, ed))...)
 	}
 	sort.Slice(ranked, func(i, j int) bool { return ranked[i].Score < ranked[j].Score })
 	if len(ranked) == 0 {
@@ -481,11 +609,46 @@ func (s *Server) runCascade(ctx context.Context, deliveryID string) {
 	var directed int
 	_ = s.db.QueryRow(ctx, `SELECT count(*) FROM dispatch_offers
 		WHERE delivery_id=$1 AND kind='directed'`, deliveryID).Scan(&directed)
-	if directed < s.cfg.Dispatch.CascadeSize {
+	if directed < ed.CascadeSize {
 		s.offerDirected(ctx, d, o, ranked[0], directed+1)
 		return
 	}
 	s.offerBroadcast(ctx, d, o, ranked)
+}
+
+// nudgeNearbySearches re-runs open dispatch searches near a newly visible
+// courier (first positioned batch after going online, or back from stale).
+// Without it a courier who taps "Go online" after the accept-time or
+// food-ready wave already ran sits visible with a GPS lock but gets no
+// offers: the cascade otherwise only advances on offer expiry, retry, or a
+// fresh ready tap, none of which fires for a courier who arrives late. Each
+// nudge only enqueues a deduped `dispatch_run` job; runCascade stays the
+// state-guarded decider, and its own candidate query applies the exact
+// corridor/mode/size filters, so the radius here is just a cheap trigger
+// bound (the largest configured to-pickup distance).
+func (s *Server) nudgeNearbySearches(ctx context.Context, lat, lng float64) {
+	radius := s.cfg.Dispatch.BikerMaxToPickupM
+	if r := s.cfg.Dispatch.RunnerMaxToPickupM; r > radius {
+		radius = r
+	}
+	rows, err := s.db.Query(ctx, `SELECT d.id FROM deliveries d
+		JOIN orders o ON o.id=d.order_id
+		JOIN merchants m ON m.id=o.merchant_id
+		WHERE d.status IN ('searching','offered')
+		AND ST_DWithin(m.location, ST_SetSRID(ST_MakePoint($1,$2),4326)::geography, $3)
+		ORDER BY d.search_started_at DESC NULLS LAST LIMIT 10`, lng, lat, radius)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	now := time.Now()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil || id == "" {
+			continue
+		}
+		s.enqueueUnlessPending("dispatch_run", id, now)
+	}
 }
 
 // offerPayload is what the courier decides on: who, how far, how much.
@@ -496,14 +659,16 @@ func (s *Server) offerPayload(o orderRow, toPickupM, tripM float64) string {
 	p, _ := json.Marshal(map[string]any{
 		"merchant_name": name, "to_pickup_m": toPickupM, "trip_m": tripM,
 		"payout_minor": q.CourierPayout, "currency": o.Currency,
-		"size_class": o.Size, "spill_risk": o.Spill,
+		"size_class":   o.Size,
 		"ready_at_est": iso(o.ReadyAtEst), "window_end": iso(o.WindowEnd),
 	})
 	return string(p)
 }
 
 func (s *Server) offerDirected(ctx context.Context, d deliveryRow, o orderRow, c ScoredCandidate, rank int) {
-	exp := time.Now().Add(time.Duration(s.cfg.Dispatch.OfferWindowS) * time.Second)
+	// A9: offer timing follows the CMS settings editor.
+	ed := s.effectiveDispatch(ctx, s.merchantCountryForOrder(ctx, o.ID))
+	exp := time.Now().Add(time.Duration(ed.OfferWindowS) * time.Second)
 	var offerID string
 	err := s.db.QueryRow(ctx, `INSERT INTO dispatch_offers(delivery_id,courier_id,rank,kind,score,payload,expires_at)
 		VALUES($1,$2,$3,'directed',$4,$5,$6) RETURNING id`,
@@ -514,7 +679,7 @@ func (s *Server) offerDirected(ctx context.Context, d deliveryRow, o orderRow, c
 	_, _ = s.db.Exec(ctx, `UPDATE deliveries SET status='offered' WHERE id=$1 AND status='searching'`, d.ID)
 	s.enqueueNow("offer_expire", fmt.Sprintf(`{"offer_id":%q}`, offerID), exp)
 	s.queuePush(c.CourierID, "New delivery offer",
-		fmt.Sprintf("%s · %.1f km to go · expires in %d s", merchantShort(o.MerchantID, s), (c.ToPickupM+c.TripM)/1000, s.cfg.Dispatch.OfferWindowS))
+		fmt.Sprintf("%s · %.1f km to go · expires in %d s", merchantShort(o.MerchantID, s), (c.ToPickupM+c.TripM)/1000, ed.OfferWindowS))
 	s.hub.Broadcast(c.CourierID, fmt.Sprintf(`{"type":"offer.created","offer_id":%q,"delivery_id":%q,"expires_at":%q}`,
 		offerID, d.ID, exp.UTC().Format(time.RFC3339)))
 }
@@ -529,7 +694,9 @@ func merchantShort(merchantID string, s *Server) string {
 }
 
 func (s *Server) offerBroadcast(ctx context.Context, d deliveryRow, o orderRow, ranked []ScoredCandidate) {
-	exp := time.Now().Add(time.Duration(s.cfg.Dispatch.BroadcastWindowS) * time.Second)
+	// A9: broadcast timing follows the CMS settings editor.
+	ed := s.effectiveDispatch(ctx, s.merchantCountryForOrder(ctx, o.ID))
+	exp := time.Now().Add(time.Duration(ed.BroadcastWindowS) * time.Second)
 	for _, c := range ranked {
 		var offerID string
 		err := s.db.QueryRow(ctx, `INSERT INTO dispatch_offers(delivery_id,courier_id,rank,kind,score,payload,expires_at)
@@ -589,7 +756,10 @@ func (s *Server) moveToStaffSearch(ctx context.Context, deliveryID string) {
 	if err != nil {
 		return
 	}
-	exp := time.Now().Add(time.Duration(s.cfg.Dispatch.StaffS) * time.Second)
+	// A9: staff window follows the CMS settings editor.
+	var mCountry string
+	_ = tx.QueryRow(ctx, `SELECT country FROM merchants WHERE id=$1`, merchantID).Scan(&mCountry)
+	exp := time.Now().Add(time.Duration(s.effectiveDispatch(ctx, mCountry).StaffS) * time.Second)
 	var tripM float64
 	_ = tx.QueryRow(ctx, `SELECT ST_Distance(m.location, o.dropoff) FROM orders o
 		JOIN merchants m ON m.id=o.merchant_id WHERE o.id=$1`, orderID).Scan(&tripM)
@@ -598,7 +768,7 @@ func (s *Server) moveToStaffSearch(ctx context.Context, deliveryID string) {
 			VALUES($1,$2,'staff',$3,$4) ON CONFLICT (delivery_id,courier_id) DO NOTHING`,
 			deliveryID, uid, s.offerPayload(o, 0, tripM), exp)
 	}
-	_ = enqueueTx(ctx, tx, "staff_timeout", fmt.Sprintf(`{"delivery_id":%q}`, deliveryID), exp)
+	_ = s.enqueueTx(ctx, tx, "staff_timeout", fmt.Sprintf(`{"delivery_id":%q}`, deliveryID), exp)
 	if err := tx.Commit(ctx); err != nil {
 		return
 	}
@@ -617,7 +787,7 @@ func (s *Server) notifyNoCourier(ctx context.Context, deliveryID, orderID string
 		return
 	}
 	s.queuePush(o.CustomerID, "No courier found",
-		"No runner, biker, or staff is available. Choose: wait 5 more minutes, switch to pickup, or cancel with a full refund.")
+		"No runner, biker, or staff is free right now. Open your order to keep waiting for a courier, collect it yourself, or cancel with a full refund.")
 	s.broadcastOrder(ctx, o.CustomerID, o.MerchantID, orderID, o.Status)
 }
 
@@ -685,7 +855,7 @@ func (s *Server) acceptOffer(w http.ResponseWriter, r *http.Request) {
 		problem(w, code, "Accept failed", msg)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"delivery": s.deliveryViewForCourier(r.Context(), d)})
+	writeJSON(w, 200, s.deliveryEnvelopeForCourier(r.Context(), d))
 }
 
 // acceptCore is the shared atomic accept for workout and staff offers.
@@ -726,29 +896,71 @@ func (s *Server) acceptCore(ctx context.Context, offer offerRow, courierID, deli
 		return deliveryRow{}, 500, err.Error()
 	}
 	// Leave-now nudge: ready_at_est − eta_pickup − 60 s (plan §6.4).
+	// A9: planning speeds follow the CMS settings editor.
 	runAt := time.Now().Add(5 * time.Second)
 	if o.ReadyAtEst != nil {
-		speed := s.cfg.Dispatch.RunnerPlanKmh / 3.6
+		ed := s.effectiveDispatch(ctx, s.merchantCountryForOrder(ctx, orderID))
+		speed := ed.RunnerPlanKmh / 3.6
 		if deliveryType == "workout" {
 			var mode string
 			_ = tx.QueryRow(ctx, `SELECT mode FROM couriers WHERE user_id=$1`, courierID).Scan(&mode)
 			if mode == "biker" {
-				speed = s.cfg.Dispatch.BikerPlanKmh / 3.6
+				speed = ed.BikerPlanKmh / 3.6
 			}
 		}
-		eta := toPickup * s.cfg.Dispatch.Circuity / speed
+		eta := toPickup * ed.Circuity / speed
 		if t := o.ReadyAtEst.Add(-time.Duration(eta+60) * time.Second); t.After(runAt) {
 			runAt = t
 		}
 	}
-	_ = enqueueTx(ctx, tx, "leave_now_nudge", fmt.Sprintf(`{"delivery_id":%q}`, offer.DeliveryID), runAt)
-	_ = enqueueTx(ctx, tx, "route_refresh", fmt.Sprintf(`{"delivery_id":%q}`, offer.DeliveryID), time.Now())
+	_ = s.enqueueTx(ctx, tx, "leave_now_nudge", fmt.Sprintf(`{"delivery_id":%q}`, offer.DeliveryID), runAt)
+	_ = s.enqueueTx(ctx, tx, "route_refresh", fmt.Sprintf(`{"delivery_id":%q}`, offer.DeliveryID), time.Now())
 	if err := tx.Commit(ctx); err != nil {
 		return deliveryRow{}, 500, err.Error()
 	}
 	d, _ := s.loadDelivery(ctx, offer.DeliveryID)
-	s.queuePush(o.CustomerID, "Runner assigned", "Your order has a courier — follow them live on the map.")
+	var winnerName, winnerMode string
+	_ = s.db.QueryRow(ctx, `SELECT split_part(u.name,' ',1), COALESCE(c.mode,'staff') FROM users u
+		LEFT JOIN couriers c ON c.user_id=u.id WHERE u.id=$1`, courierID).Scan(&winnerName, &winnerMode)
+	winnerMode = courierKind(deliveryType, winnerMode)
+	title, body := assignedPushCopy(winnerMode)
+	s.queuePush(o.CustomerID, title, body)
+	// Kitchen handover: the merchant owner gets their own push + a dedicated
+	// frame (in addition to the order.status broadcast below) so the kitchen
+	// sees WHO accepted at once and the "finding courier" line flips to the
+	// courier name without waiting for the next poll.
+	var ownerID string
+	_ = s.db.QueryRow(ctx, `SELECT owner_id FROM merchants WHERE id=$1`, o.MerchantID).Scan(&ownerID)
+	if ownerID != "" {
+		if winnerName == "" {
+			winnerName = "A courier"
+		}
+		s.queuePush(ownerID, "Courier found",
+			fmt.Sprintf("%s (%s) accepted order %s — show them your pickup code when they arrive.", winnerName, winnerMode, o.Code))
+		assignMsg, _ := json.Marshal(map[string]any{"type": "delivery.assigned",
+			"delivery_id": offer.DeliveryID, "order_id": orderID,
+			"courier_name": winnerName, "courier_mode": winnerMode,
+			"delivery_status": d.Status})
+		s.hub.Broadcast(ownerID, string(assignMsg))
+	}
 	s.broadcastOrder(ctx, o.CustomerID, o.MerchantID, orderID, o.Status)
+	// Losers: every other courier who held a pending offer for this delivery
+	// gets an explicit taken frame so a stale offer card clears at once
+	// instead of lingering until its 30 s expiry. One order is one courier:
+	// the guarded claim above already decided the winner; this is the notice.
+	loserRows, lerr := s.db.Query(ctx, `SELECT DISTINCT courier_id FROM dispatch_offers
+		WHERE delivery_id=$1 AND courier_id<>$2`, offer.DeliveryID, courierID)
+	if lerr == nil {
+		defer loserRows.Close()
+		takenMsg, _ := json.Marshal(map[string]any{"type": "offer.taken",
+			"delivery_id": offer.DeliveryID, "order_id": orderID})
+		for loserRows.Next() {
+			var loser string
+			if err := loserRows.Scan(&loser); err == nil && loser != "" {
+				s.hub.Broadcast(loser, string(takenMsg))
+			}
+		}
+	}
 	return d, 200, ""
 }
 
@@ -790,7 +1002,7 @@ func (s *Server) deliveryViewForCourier(ctx context.Context, d deliveryRow) map[
 		"order_status": o.Status, "currency": o.Currency,
 		"pickup": map[string]any{"merchant_name": mName, "lat": mlat, "lng": mlng, "note": mNote, "address": mAddr},
 		"eta_s":  d.EtaS, "route_polyline": d.Polyline, "route_warning": maps.BetaWarning,
-		"size_class": o.Size, "spill_risk": o.Spill,
+		"size_class":   o.Size,
 		"ready_at_est": iso(o.ReadyAtEst), "window_end": iso(o.WindowEnd),
 		"nudged": d.NudgedAt != nil,
 	}
@@ -803,16 +1015,36 @@ func (s *Server) deliveryViewForCourier(ctx context.Context, d deliveryRow) map[
 	return v
 }
 
+// deliveryEnvelopeForCourier shapes the DeliveryEnvelope the courier PWA
+// reads: the delivery view plus the measured impact (once delivered) and the
+// payout from the settled quote (staff-aware). It keeps every courier leg on
+// the openapi DeliveryEnvelope contract instead of a bare delivery object.
+func (s *Server) deliveryEnvelopeForCourier(ctx context.Context, d deliveryRow) map[string]any {
+	o, err := s.loadOrder(ctx, d.OrderID)
+	env := map[string]any{"delivery": s.deliveryViewForCourier(ctx, d)}
+	if err != nil {
+		return env
+	}
+	q := SettleQuoteFor(o.quote(), d.Type == "staff")
+	env["payout"] = money(q.CourierPayout, o.Currency)
+	if d.Status == DeliveryDelivered {
+		env["impact"] = map[string]any{"distance_m": d.CarriedDistM, "active_s": d.CarriedActiveS}
+	}
+	return env
+}
+
 func (s *Server) activeDelivery(w http.ResponseWriter, r *http.Request) {
 	c := claims(r)
 	d, err := scanDelivery(s.db.QueryRow(r.Context(), `SELECT `+deliveryCols+` FROM deliveries
 		WHERE courier_id=$1 AND status IN ('assigned','at_pickup','picked_up','at_dropoff')
 		ORDER BY assigned_at DESC LIMIT 1`, c.Sub))
 	if err != nil {
-		writeJSON(w, 200, map[string]any{"delivery": nil})
+		// No active leg is "not found", not an empty 200: the courier PWA
+		// treats a 404 as "nothing assigned" and skips recovery.
+		problem(w, 404, "Not found", "no active delivery")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"delivery": s.deliveryViewForCourier(r.Context(), d)})
+	writeJSON(w, 200, s.deliveryEnvelopeForCourier(r.Context(), d))
 }
 
 func (s *Server) getDelivery(w http.ResponseWriter, r *http.Request) {
@@ -826,7 +1058,7 @@ func (s *Server) getDelivery(w http.ResponseWriter, r *http.Request) {
 		problem(w, 403, "Forbidden", "not your delivery")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"delivery": s.deliveryViewForCourier(r.Context(), d)})
+	writeJSON(w, 200, s.deliveryEnvelopeForCourier(r.Context(), d))
 }
 
 // arrivedDelivery marks counter/door arrival for live UX (no timers, no
@@ -865,7 +1097,7 @@ func (s *Server) arrivedDelivery(w http.ResponseWriter, r *http.Request) {
 	o, _ := s.loadOrder(r.Context(), d.OrderID)
 	s.broadcastOrder(r.Context(), o.CustomerID, o.MerchantID, o.ID, o.Status)
 	updated, _ := s.loadDelivery(r.Context(), d.ID)
-	writeJSON(w, 200, map[string]any{"delivery": s.deliveryViewForCourier(r.Context(), updated)})
+	writeJSON(w, 200, s.deliveryEnvelopeForCourier(r.Context(), updated))
 }
 
 // pickupDelivery confirms the handover at the counter: the courier types the
@@ -909,7 +1141,7 @@ func (s *Server) pickupDelivery(w http.ResponseWriter, r *http.Request) {
 			if _, err := tx.Exec(ctx, `UPDATE deliveries SET status='picked_up', picked_up_at=now() WHERE id=$1`, d.ID); err != nil {
 				return err
 			}
-			return enqueueTx(ctx, tx, "route_refresh", fmt.Sprintf(`{"delivery_id":%q}`, d.ID), time.Now())
+			return s.enqueueTx(ctx, tx, "route_refresh", fmt.Sprintf(`{"delivery_id":%q}`, d.ID), time.Now())
 		})
 	if err != nil {
 		problem(w, 409, "Conflict", "order changed; refresh and try again")
@@ -917,7 +1149,7 @@ func (s *Server) pickupDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	s.queuePush(o.CustomerID, "Order picked up", "Your food is on the move — follow it live.")
 	updated, _ := s.loadDelivery(r.Context(), d.ID)
-	writeJSON(w, 200, map[string]any{"delivery": s.deliveryViewForCourier(r.Context(), updated)})
+	writeJSON(w, 200, s.deliveryEnvelopeForCourier(r.Context(), updated))
 }
 
 // deliveredDelivery completes the handover with the customer's 4-digit PIN
@@ -990,22 +1222,21 @@ func (s *Server) deliveredDelivery(w http.ResponseWriter, r *http.Request) {
 				last_delivery_at=now(), updated_at=now() WHERE user_id=$1`, c.Sub)
 			// B6: photo proof gets an AI check in the same transaction.
 			if proofID != "" {
-				_ = enqueueTx(ctx, tx, AIJobProofCheck, fmt.Sprintf(`{"delivery_id":%q,"file_id":%q}`, d.ID, proofID), time.Now())
+				_ = s.enqueueTx(ctx, tx, AIJobProofCheck, fmt.Sprintf(`{"delivery_id":%q,"file_id":%q}`, d.ID, proofID), time.Now())
 			}
-			return enqueueTx(ctx, tx, "auto_complete", fmt.Sprintf(`{"order_id":%q}`, o.ID),
+			return s.enqueueTx(ctx, tx, "auto_complete", fmt.Sprintf(`{"order_id":%q}`, o.ID),
 				time.Now().Add(72*time.Hour))
 		})
 	if err != nil {
 		problem(w, 409, "Conflict", "order changed; refresh and try again")
 		return
 	}
-	s.queuePush(o.CustomerID, "Delivered — thank you!",
-		fmt.Sprintf("You powered %.1f km of your courier's workout.", carriedM/1000))
+	pushTitle, pushBody, receipt := deliveredCopy(d.Type, o.Code, carriedM, carriedActive)
+	s.queuePush(o.CustomerID, pushTitle, pushBody)
 	var email string
 	_ = s.db.QueryRow(r.Context(), `SELECT email FROM users WHERE id=$1`, o.CustomerID).Scan(&email)
 	if email != "" {
-		s.enqueueNow("email_send", fmt.Sprintf(`{"to":%q,"subject":"Your Trackfud receipt","body":%q}`,
-			email, fmt.Sprintf("Order %s delivered. You powered %.1f km and %d active minutes.", o.Code, carriedM/1000, carriedActive/60)), time.Now())
+		s.enqueueNow("email_send", fmt.Sprintf(`{"to":%q,"subject":"Your Trackfud receipt","body":%q}`, email, receipt), time.Now())
 	}
 	updated, _ := s.loadDelivery(r.Context(), d.ID)
 	writeJSON(w, 200, map[string]any{
@@ -1170,7 +1401,7 @@ func (s *Server) acceptStaffOffer(w http.ResponseWriter, r *http.Request) {
 		problem(w, code, "Accept failed", msg)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"delivery": s.deliveryViewForCourier(r.Context(), d2)})
+	writeJSON(w, 200, s.deliveryEnvelopeForCourier(r.Context(), d2))
 }
 
 // ---------- River-style job handlers (all idempotent) ----------
@@ -1233,14 +1464,34 @@ func (s *Server) handleStaffTimeout(ctx context.Context, deliveryID string) {
 	s.notifyNoCourier(ctx, deliveryID, orderID)
 }
 
+// leaveNudgeSQL stamps nudged_at once per delivery while the courier is
+// still heading to (or waiting at) pickup; $1 is the delivery id.
+const leaveNudgeSQL = `UPDATE deliveries SET nudged_at=now() WHERE id=$1
+	AND nudged_at IS NULL AND status IN ('assigned','at_pickup')
+	RETURNING courier_id, order_id`
+
+// claimLeaveNudge runs the guarded nudged_at stamp. ok=false (nil error)
+// means the nudge already fired or the delivery moved past pickup.
+func claimLeaveNudge(ctx context.Context, q claimer, deliveryID string) (courierID, orderID string, ok bool, err error) {
+	err = q.QueryRow(ctx, leaveNudgeSQL, deliveryID).Scan(&courierID, &orderID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, fmt.Errorf("leave nudge claim: %w", err)
+	}
+	return courierID, orderID, true, nil
+}
+
 // handleLeaveNudge tells the courier to head to the restaurant now. The
 // nudged_at guard makes retries and ready-early races a no-op.
 func (s *Server) handleLeaveNudge(ctx context.Context, deliveryID string) {
-	var courierID, orderID string
-	err := s.db.QueryRow(ctx, `UPDATE deliveries SET nudged_at=now() WHERE id=$1
-		AND nudged_at IS NULL AND status IN ('assigned','at_pickup')
-		RETURNING courier_id, order_id`).Scan(&courierID, &orderID)
+	courierID, orderID, ok, err := claimLeaveNudge(ctx, s.db, deliveryID)
 	if err != nil {
+		s.log.Warn("leave-now nudge failed", "delivery", deliveryID, "err", err)
+		return
+	}
+	if !ok {
 		return
 	}
 	o, err := s.loadOrder(ctx, orderID)
@@ -1309,11 +1560,13 @@ func (s *Server) handleRouteRefresh(ctx context.Context, deliveryID string) {
 	if clat == 0 && clng == 0 {
 		clat, clng = plat, plng
 	}
-	planKmh := s.cfg.Dispatch.RunnerPlanKmh
+	// A9: planning speeds follow the CMS settings editor.
+	ed := s.effectiveDispatch(ctx, s.merchantCountryForOrder(ctx, o.ID))
+	planKmh := ed.RunnerPlanKmh
 	if mode == "biker" {
-		planKmh = s.cfg.Dispatch.BikerPlanKmh
+		planKmh = ed.BikerPlanKmh
 	}
-	res := maps.Estimate(haversineM(clat, clng, dlat, dlng), planKmh, s.cfg.Dispatch.Circuity)
+	res := maps.Estimate(haversineM(clat, clng, dlat, dlng), planKmh, ed.Circuity)
 	if s.cfg.Maps.APIKey != "" {
 		if live, err := maps.ComputeRoute(ctx, s.cfg.Maps.APIKey, clat, clng, dlat, dlng, mode); err == nil {
 			res = live
@@ -1386,7 +1639,8 @@ func (s *Server) deliveryPublicView(ctx context.Context, orderID string) map[str
 		return nil
 	}
 	v := map[string]any{"status": d.Status, "type": d.Type, "eta_s": d.EtaS,
-		"route_polyline": d.Polyline, "route_warning": maps.BetaWarning}
+		"route_polyline": d.Polyline, "route_warning": maps.BetaWarning,
+		"customer_pickup": isCustomerPickup(d.Status, d.CancelNote)}
 	if d.CourierID == nil {
 		return v
 	}

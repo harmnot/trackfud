@@ -12,18 +12,26 @@
     "auth": {
         "login": "Masuk",
         "signup": "Daftar",
-        "demo": "Masuk demo sekali klik",
         "email": "Email",
         "password": "Kata sandi",
         "name": "Nama lengkap",
+        "namePh": "cth. Budi Santoso",
         "logout": "Keluar"
     },
     "home": {
         "title": "Makanan yang bergerak bersama pelari",
         "nearYou": "Diurutkan dari titik antar kamu",
         "runnersNearby": "Ada pelari di dekat sini",
+        "runnersBikersNearby": "Pelari & pesepeda di dekat sini",
         "staffOnly": "Diantar staf",
-        "setLocation": "Atur lokasi antar"
+        "setLocation": "Atur lokasi antar",
+        "all": "Semua",
+        "categories": "Kategori",
+        "change": "Ubah",
+        "deliveringTo": "Antar ke {label}.",
+        "noLocationSet": "Lokasi antar belum diatur.",
+        "noMatch": "Tidak ada restoran yang cocok.",
+        "unrated": "Baru"
     },
     "menu": {
         "pickupOnly": "Ambil sendiri",
@@ -31,18 +39,23 @@
         "add": "Tambah",
         "showOriginal": "Lihat bahasa asli",
         "cartTotal": "Total keranjang",
-        "empty": "Belum ada hidangan di menu saat ini."
+        "empty": "Belum ada hidangan di menu saat ini.",
+        "all": "Semua",
+        "categories": "Kategori menu"
     },
     "location": {
         "title": "Lokasi antar",
         "sub": "Simpan alamatmu, pin di peta, pilih yang utama.",
         "useGps": "Pakai lokasiku",
         "lat": "Lintang",
+        "latPh": "cth. -6.2088",
         "lng": "Bujur",
+        "lngPh": "cth. 106.8456",
         "label": "Label",
         "address": "Alamat jalan",
         "addressPh": "Jalan, gedung, patokan…",
         "note": "Catatan antar (gerbang, lantai…)",
+        "notePh": "cth. Gerbang hijau, hubungi saat tiba",
         "save": "Simpan lokasi",
         "saved": "Tersimpan di server",
         "savedDevice": "Tersimpan di perangkat ini (masuk untuk sinkron ke server).",
@@ -112,7 +125,9 @@
         "payNow": "Bayar sekarang",
         "back": "Kembali ke keranjang",
         "estimateNote": "Perkiraan — server memastikan total pasti saat kamu membayar.",
-        "cardPending": "Kartu disetujui di sandbox. Pesanan dibuat setelah pembayaran terkonfirmasi — pantau di Pesanan Saya."
+        "cardPending": "Kartu disetujui di sandbox. Pesanan dibuat setelah pembayaran terkonfirmasi — pantau di Pesanan Saya.",
+        "checkStatus": "Cek status pembayaran",
+        "pinNote": "Setelah membayar, kamu mendapat PIN antar 4 digit. Sebutkan hanya ke kurirmu secara langsung saat serah terima — jangan lewat chat."
     },
     "track": {
         "ordersTitle": "Pesananku",
@@ -131,11 +146,13 @@
         "d_placed": "Restoran punya sekitar 3 menit untuk menerima.",
         "d_accepted": "Dapur memasak; pelari atau pesepeda terdekat dicarikan.",
         "d_ready": "Makanan dikemas dan menunggu diambil.",
-        "d_picked_up": "Pelari sudah mengambilnya — ikuti peta live.",
+        "d_picked_up": "Kurirmu sudah mengambilnya — ikuti peta live.",
         "d_delivered": "Selamat menikmati. Beri tahu PIN ke kurir saat serah terima.",
         "courierTitle": "Kurirmu",
-        "searching": "Mencari pelarimu…",
+        "searching": "Mencari kurirmu…",
         "searchingSub": "Pesananmu ditawarkan ke pelari dan pesepeda di rute terdekat.",
+        "courierNoneCancelled": "Tidak ada kurir yang ditugaskan — pesanan ini dibatalkan.",
+        "courierNoneRejected": "Tidak ada kurir yang ditugaskan — restoran tidak dapat menerima pesanan ini.",
         "runner": "pelari",
         "biker": "pesepeda",
         "staff": "staf",
@@ -153,15 +170,28 @@
         "etaReady": "Siap sekitar {time}",
         "etaSoon": "Waktu pasti menyusul setelah restoran menerima.",
         "home": "Kamu",
-        "refundedNote": "Danamu kembali penuh."
+        "liveMap": "Peta live pengiriman: {status}",
+        "mapLoading": "Memuat peta live…",
+        "mapRetry": "Coba lagi peta live",
+        "schematicMap": "Peta skematis — ubin live butuh kunci Maps.",
+        "updatedAt": "Diperbarui {time}",
+        "refundedNote": "Danamu kembali penuh.",
+        "checkStatus": "Cek status pembayaran",
+        "couriers": "kurir",
+        "loadMore": "Muat lebih banyak",
+        "searchOrders": "Cari pesanan",
+        "searchOrdersPh": "Cari dengan kode pesanan…",
+        "showingOf": "Menampilkan {shown} dari {total} pesanan"
     },
     "topup": {
         "title": "Isi dompet",
         "amount": "Nominal (unit minor)",
+        "amountPh": "cth. 50000",
         "go": "Isi dengan kartu (sandbox)",
         "pending": "Kartu disetujui di sandbox. Saldo masuk setelah webhook Paddle mengonfirmasi.",
         "balance": "Saldo",
-        "credited": "Saldo berhasil ditambahkan ke dompet."
+        "credited": "Saldo berhasil ditambahkan ke dompet.",
+        "fxNotice": "Paddle menagih {charge}, dikonversi dengan kurs saat ini — dompet Anda menerima penuh {credit}."
     },
     "pin": {
         "waiting": "PIN-mu muncul di sini setelah restoran menerima.",
@@ -169,7 +199,11 @@
         "reveal": "Tampilkan PIN",
         "hide": "Sembunyikan",
         "copy": "Salin",
-        "copied": "PIN tersalin."
+        "copied": "PIN tersalin.",
+        "done": "Serah terima selesai — PIN diterima, selamat makan!",
+        "doneSub": "Kode ini sudah tidak aktif. Beri rating di bawah.",
+        "howItWorks": "Kurirmu akan menanyakan kode 4 digit ini di pintu. Sebutkan langsung untuk menyelesaikan serah terima.",
+        "neverChat": "Jangan pernah mengetik PIN di chat — sebutkan langsung ke kurir."
     },
     "rate": {
         "title_courier": "Nilai kurirmu",
@@ -208,7 +242,11 @@
         "empty": "Belum ada pesanan yang sampai. Kilometermu muncul di sini.",
         "measuredNote": "Diukur dari GPS kurir.",
         "recent": "Pesanan terakhir",
-        "couriers": "kurir"
+        "couriers": "kurir",
+        "quoteCaption": "Dari pengantaran terakhirmu",
+        "quoteInvite": "Pesanan pertamamu akan menggerakkan latihan seseorang.",
+        "quoteLine": "Kamu menggerakkan {distance} latihan {name}.",
+        "quoteLineAnon": "Kamu menggerakkan {distance} latihan seorang kurir."
     },
     "chat": {
         "title": "Chat dengan kurir",
@@ -227,7 +265,7 @@
     },
     "cheer": {
         "title": "Kirim semangat",
-        "sub": "Pelari mendengarnya dibacakan di earphone-nya.",
+        "sub": "Kurirmu mendengarnya dibacakan di earphone-nya.",
         "c_muscle": "💪 Semangat, kamu bisa!",
         "c_party": "🎉 Larinya kencang!",
         "c_go_run": "🏃 Terus melesat!",
@@ -236,13 +274,20 @@
         "sent": "Semangat yang kamu kirim"
     },
     "nocourier": {
-        "title": "Masih mencari pelari",
-        "sub": "Belum ada pelari atau pesepeda yang bisa mengambil ini. Dapur belum mulai — kamu yang pilih.",
-        "wait": "Tunggu 5 menit lagi",
-        "pickup": "Ganti ke ambil sendiri",
+        "title": "Belum ada kurir yang tersedia",
+        "sub": "Belum ada pelari, pesepeda, atau staf restoran yang bisa mengambil pesananmu. Dapur menyimpan makananmu — pilih langkah berikutnya.",
+        "wait": "Tetap tunggu kurir",
+        "pickup": "Ambil sendiri",
         "cancel": "Batalkan, dana kembali penuh",
-        "ok_wait": "Menunggu 5 menit lagi. Pesananmu terus ditawarkan ke pelari terdekat.",
-        "ok_pickup": "Permintaan ambil sendiri dicatat. Restoran mengonfirmasi dan mengemasnya untukmu."
+        "ok_wait": "Mencari lagi — pesananmu ditawarkan ke pelari, pesepeda, dan staf di dekat dapur.",
+        "stillNone": "Kami sudah mencari lagi, tapi belum ada yang tersedia.",
+        "conflict": "Pesananmu baru saja berubah — cek status terbaru di atas.",
+        "pickupTitle": "Kamu mengambil pesanan ini sendiri",
+        "pickupCooking": "Dapur masih memasak. Datanglah setelah dikemas — halaman ini diperbarui langsung.",
+        "pickupReady": "Makananmu sudah dikemas dan menunggu di konter.",
+        "pickupCodeLabel": "Kode pesananmu",
+        "pickupShowCode": "Sebutkan kode pesanan ini di konter, lalu restoran menyerahkan makananmu.",
+        "pickupNoPin": "Tidak ada kurir yang datang, jadi simpan PIN antarmu sendiri — restoran tidak pernah membutuhkannya."
     },
     "receipt": {
         "title": "Struk",

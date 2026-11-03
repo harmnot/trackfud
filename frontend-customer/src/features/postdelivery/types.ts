@@ -3,8 +3,11 @@
  * Source of truth is `backend/api/openapi.yaml`: ratings, cheers, messages,
  * delivery-choice, impact, and message translate all have real endpoints, so
  * writes below go to the server first and only queue in the offline outbox
- * (`outbox.ts`) when the network fails. Nothing here invents fees, roles, or
- * statuses from `docs/app-context.md`. */
+ * (`outbox.ts`) when the network fails — except the no-courier choice, which
+ * is time-critical and never replays later. Nothing here invents fees, roles,
+ * or statuses from `docs/app-context.md`. */
+
+import type { DeliveryInfo, OrderStatus } from '../orders/types';
 
 export type Stars = 1 | 2 | 3 | 4 | 5;
 export const STAR_VALUES: Stars[] = [1, 2, 3, 4, 5];
@@ -149,11 +152,45 @@ export function toServerChoice(choice: NoCourierChoice): 'wait_more' | 'pickup' 
   return choice;
 }
 
-/** Courier search runs 4 min before staff fallback; the customer waits in
- * `placed` all along, so age the order client-side from `created_at`. */
-export const NO_COURIER_SEARCH_S = 240;
-/** "Wait 5 more min" snooze before the panel nudges again. */
-export const NO_COURIER_SNOOZE_S = 300;
+/** Map a `delivery-choice` wire value back to the local choice. */
+export function fromServerChoice(raw: unknown): NoCourierChoice | null {
+  if (raw === 'wait_more') return 'wait';
+  if (raw === 'pickup' || raw === 'cancel') return raw;
+  return null;
+}
+
+/** Server-confirmed outcome of one no-courier choice. */
+export type NoCourierOutcome = { choice: NoCourierChoice; refunded: boolean };
+
+/** Narrow an unknown `delivery-choice` response to its outcome. */
+export function parseNoCourierOutcome(raw: unknown): NoCourierOutcome | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const m = raw as Record<string, unknown>;
+  const choice = fromServerChoice(m['choice']);
+  if (!choice) return null;
+  return { choice, refunded: m['refunded'] === true };
+}
+
+/** Kitchen accepted and nobody has collected the food yet: the only window
+ * where a no-courier choice still changes how the order ends. Placed orders
+ * have no delivery yet (dispatch starts at merchant accept). */
+export function isBeforePickup(status: OrderStatus): boolean {
+  return status === 'accepted' || status === 'ready';
+}
+
+/** Dispatch gave up (`delivery.status` = `no_courier`) on an order still
+ * before pickup: exactly when the customer must choose. Server truth only
+ * (no client clock), so the WS `order.status` refetch or the 10 s poll
+ * brings the choices up the moment the search ends. */
+export function needsNoCourierChoice(args: { status: OrderStatus; delivery: DeliveryInfo | null }): boolean {
+  return args.delivery?.status === 'no_courier' && isBeforePickup(args.status);
+}
+
+/** The customer switched to collecting the order themselves and has not
+ * collected it yet (`delivery.customer_pickup`). */
+export function isSelfPickup(args: { status: OrderStatus; delivery: DeliveryInfo | null }): boolean {
+  return args.delivery?.customerPickup === true && isBeforePickup(args.status);
+}
 
 /** Powered distance for one order. `estimated` is false when the server
  * measured the real carry with courier GPS. */
@@ -211,6 +248,18 @@ export function parseServerImpact(raw: unknown): ServerImpact | null {
     activeS: m['active_s'],
     recent,
   };
+}
+
+/** Latest delivered entry with a measured carry (distance > 0), by
+ * `delivered_at`. The server already sends newest first; re-checked so the
+ * Home line never depends on row order. Null when nothing was measured. */
+export function latestMeasuredImpact(recent: ImpactRecent[]): ImpactRecent | null {
+  let latest: ImpactRecent | null = null;
+  for (const r of recent) {
+    if (r.distanceM <= 0) continue;
+    if (!latest || Date.parse(r.deliveredAt) > Date.parse(latest.deliveredAt)) latest = r;
+  }
+  return latest;
 }
 
 /** One stored message from `GET .../messages` (server shape). */

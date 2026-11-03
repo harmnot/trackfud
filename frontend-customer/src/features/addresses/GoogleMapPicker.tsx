@@ -12,94 +12,23 @@
  * "lat, lng", which are already explicit) calls onPick. */
 
 import { useEffect, useRef, useState } from 'react';
-import { Button, Note } from '../../components/ui';
+import { Button, Note, TextInput } from '../../components/ui';
+import { logger } from '../../lib/logger';
+import {
+  ensureMaps,
+  mapsKey,
+  mapsMapId,
+  moveMarker,
+  readPos,
+  resetMapsLoad,
+  type GoogleMapsNs,
+  type MapsAutocomplete,
+  type MapsMap,
+  type MapsMarker,
+} from '../../lib/maps';
 import { parseLatLng } from './types';
 
-declare global {
-  interface Window {
-    google?: any;
-  }
-}
-
-const MAPS_CDN = 'https://maps.googleapis.com/maps/api/js?loading=async&libraries=places,marker';
-
 type Staged = { lat: number; lng: number; address?: string };
-
-function mapsKey(): string {
-  const raw = import.meta.env.VITE_GOOGLE_MAPS_KEY as string | undefined;
-  // Tolerate quotes/whitespace from hand-edited .env files.
-  const k = (raw ?? '').trim().replace(/^["']|["']$/g, '').trim();
-  return k;
-}
-
-let loadPromise: Promise<void> | null = null;
-
-/** Load the Maps JS API once (referrer-restricted browser key). */
-function loadMaps(): Promise<void> {
-  if (typeof window === 'undefined') return Promise.reject(new Error('no window'));
-  if (window.google?.maps) return Promise.resolve();
-  if (loadPromise) return loadPromise;
-  const key = mapsKey();
-  if (!key) return Promise.reject(new Error('missing key'));
-  loadPromise = new Promise<void>((resolve, reject) => {
-    const tag = document.createElement('script');
-    tag.src = `${MAPS_CDN}&key=${encodeURIComponent(key)}`;
-    tag.async = true;
-    tag.defer = true;
-    tag.onload = () => resolve();
-    tag.onerror = () => {
-      loadPromise = null;
-      reject(new Error('maps script failed to load — check network/adblock and the key'));
-    };
-    document.head.appendChild(tag);
-  });
-  return loadPromise;
-}
-
-/** Bootstrap the libraries we use. The `loading=async` CDN script only
- * installs the bootstrap: `google.maps.Map` and friends are undefined until
- * importLibrary resolves, so building the map straight after script onload
- * fails on a fresh page load (and only works on Retry). */
-async function ensureMaps(): Promise<any> {
-  await loadMaps();
-  const g = window.google;
-  if (!g?.maps) throw new Error('Maps JS loaded but google.maps is missing (blocked key?)');
-  if (typeof g.maps.importLibrary === 'function') {
-    await g.maps.importLibrary('maps');
-    try {
-      await g.maps.importLibrary('marker');
-    } catch (e) {
-      console.warn('[GoogleMapPicker] marker library unavailable, classic marker fallback:', e);
-    }
-    try {
-      await g.maps.importLibrary('places');
-    } catch (e) {
-      console.warn('[GoogleMapPicker] places library unavailable, no autocomplete:', e);
-    }
-  }
-  if (!g.maps.Map) {
-    throw new Error('Maps library did not initialise — check key restrictions and billing');
-  }
-  return g;
-}
-
-/** Read a position from either a classic LatLng (lat()/lng() methods) or an
- * AdvancedMarkerElement LatLngAltitude ({lat, lng} numeric props). */
-function readPos(p: any): { lat: number; lng: number } | null {
-  if (!p) return null;
-  const lat = typeof p.lat === 'function' ? p.lat() : p.lat;
-  const lng = typeof p.lng === 'function' ? p.lng() : p.lng;
-  if (typeof lat !== 'number' || typeof lng !== 'number') return null;
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  return { lat, lng };
-}
-
-/** Move either marker kind: classic Markers need setPosition, advanced
- * markers accept a position assignment. */
-function moveMarker(marker: any, pos: { lat: number; lng: number }) {
-  if (typeof marker.setPosition === 'function') marker.setPosition(pos);
-  else marker.position = pos;
-}
 
 export function GoogleMapPicker(args: {
   lat: number;
@@ -109,8 +38,10 @@ export function GoogleMapPicker(args: {
   const key = mapsKey();
   const mapRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const mapObj = useRef<any>(null);
-  const markerObj = useRef<any>(null);
+  const nsObj = useRef<GoogleMapsNs | null>(null);
+  const mapObj = useRef<MapsMap | null>(null);
+  const markerObj = useRef<MapsMarker | null>(null);
+  const autoObj = useRef<MapsAutocomplete | null>(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -123,7 +54,7 @@ export function GoogleMapPicker(args: {
   const [attempt, setAttempt] = useState(0);
 
   function retry() {
-    loadPromise = null;
+    resetMapsLoad();
     setFailed(null);
     setReady(false);
     setStaged(null);
@@ -147,46 +78,51 @@ export function GoogleMapPicker(args: {
   useEffect(() => {
     if (!key || !mapRef.current) return;
     let cancelled = false;
-    let map: any = null;
-    ensureMaps()
-      .then((g) => {
+    async function build(): Promise<void> {
+      try {
+        // Resolves only once the `maps` library initialised, so a fresh
+        // first visit can no longer outrun the bootstrap (Retry path).
+        const g = (await ensureMaps()).maps;
         if (cancelled || !mapRef.current) return;
-        map = new g.maps.Map(mapRef.current, {
+        nsObj.current = g;
+        const mapId = mapsMapId();
+        const map = new g.Map(mapRef.current, {
           center: { lat: args.lat, lng: args.lng },
           zoom: 15,
-          mapId: 'trackfud-customer-pin',
+          ...(mapId ? { mapId } : {}),
           streetViewControl: false,
           mapTypeControl: false,
         });
         mapObj.current = map;
-        const marker =
-          g.maps.marker?.AdvancedMarkerElement
-            ? new g.maps.marker.AdvancedMarkerElement({
-                map,
-                position: { lat: args.lat, lng: args.lng },
-                gmpDraggable: true,
-              })
-            : new g.maps.Marker({
-                map,
-                position: { lat: args.lat, lng: args.lng },
-                draggable: true,
-              });
+        const Advanced = mapId ? g.marker?.AdvancedMarkerElement : undefined;
+        const marker: MapsMarker = Advanced
+          ? new Advanced({
+              map,
+              position: { lat: args.lat, lng: args.lng },
+              gmpDraggable: true,
+            })
+          : new g.Marker({
+              map,
+              position: { lat: args.lat, lng: args.lng },
+              draggable: true,
+            });
         markerObj.current = marker;
-        map.addListener('click', (e: any) => {
-          const pos = readPos(e.latLng);
+        map.addListener('click', (e: unknown) => {
+          const pos = readPos((e as { latLng?: unknown } | null)?.latLng);
           if (!pos) return;
           stage(pos);
         });
-        if (typeof marker.addListener === 'function') {
-          // Drag end carries the drop point on classic Markers; advanced
-          // markers expose it via marker.position (LatLngAltitude props).
-          marker.addListener('dragend', (e: any) => {
-            const pos = readPos(e?.latLng) ?? readPos(marker.position);
-            if (pos) stage(pos);
-          });
-        }
-        if (searchRef.current && g.maps.places?.Autocomplete) {
-          const ac = new g.maps.places.Autocomplete(searchRef.current, { fields: ['geometry', 'formatted_address', 'name'] });
+        // Drag end carries the drop point on classic Markers; advanced
+        // markers expose it via marker.position (LatLngAltitude props).
+        marker.addListener?.('dragend', (e: unknown) => {
+          const raw = e as { latLng?: unknown } | null | undefined;
+          const dropped = 'setPosition' in marker ? null : marker.position;
+          const pos = readPos(raw?.latLng) ?? (dropped ? readPos(dropped) : null);
+          if (pos) stage(pos);
+        });
+        if (searchRef.current && g.places?.Autocomplete) {
+          const ac = new g.places.Autocomplete(searchRef.current, { fields: ['geometry', 'formatted_address', 'name'] });
+          autoObj.current = ac;
           ac.addListener('place_changed', () => {
             const place = ac.getPlace();
             const loc = readPos(place?.geometry?.location);
@@ -197,12 +133,13 @@ export function GoogleMapPicker(args: {
           });
         }
         setReady(true);
-      })
-      .catch((e: unknown) => {
+      } catch (e: unknown) {
         const detail = e instanceof Error ? e.message : String(e);
-        console.error('[GoogleMapPicker] Google Maps failed to load:', detail);
+        logger.error('google maps failed to load', { detail });
         if (!cancelled) setFailed(detail);
-      });
+      }
+    }
+    void build();
     return () => {
       cancelled = true;
     };
@@ -214,10 +151,11 @@ export function GoogleMapPicker(args: {
     // Props changed from outside (typed coords, GPS, confirmed pick):
     // drop any unconfirmed candidate and follow the form values.
     setStaged(null);
+    const g = nsObj.current;
     const map = mapObj.current;
     const marker = markerObj.current;
-    if (!map || !marker || !window.google) return;
-    const pos = new window.google.maps.LatLng(args.lat, args.lng);
+    if (!g || !map || !marker) return;
+    const pos = new g.LatLng(args.lat, args.lng);
     moveMarker(marker, pos);
     map.panTo(pos);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -243,21 +181,23 @@ export function GoogleMapPicker(args: {
       args.onPick(pasted);
       return;
     }
-    if (!window.google?.maps || !ready) {
+    const g = nsObj.current;
+    if (!g || !ready) {
       setMsg('Place search needs Google Maps — paste "lat, lng" or use GPS.');
       return;
     }
     try {
-      const geocoder = new window.google.maps.Geocoder();
+      const geocoder = new g.Geocoder();
       const res = await geocoder.geocode({ address: q });
-      const loc = readPos(res?.results?.[0]?.geometry?.location);
+      const first = res.results?.[0];
+      const loc = readPos(first?.geometry?.location);
       if (loc) {
         const map = mapObj.current;
         if (map) {
           map.panTo(loc);
           map.setZoom(16);
         }
-        stage({ ...loc, address: res.results[0].formatted_address });
+        stage({ ...loc, address: first?.formatted_address });
       } else {
         setMsg('No place found — try "lat, lng" or drag the pin.');
       }
@@ -337,20 +277,21 @@ export function GoogleMapPicker(args: {
   return (
     <div>
       <div className="flex gap-2">
-        <input
-          ref={searchRef}
-          className="tb-input"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              void search();
-            }
-          }}
-          placeholder="Search place name or paste lat, lng…"
-          aria-label="Search place by name or coordinates"
-        />
+        <span className="flex-1">
+          <TextInput
+            inputRef={searchRef}
+            value={query}
+            onChange={setQuery}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void search();
+              }
+            }}
+            placeholder="Search place name or paste lat, lng…"
+            aria-label="Search place by name or coordinates"
+          />
+        </span>
         <Button variant="soft" onClick={() => void search()}>
           Search
         </Button>

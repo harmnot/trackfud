@@ -39,7 +39,7 @@ sandbox webhooks, Meta Model API, Google Routes API.
 
 - Merchants (profile, `location geography(Point)`, hours, prep), agreements
   e-sign (versioned, sha256, snapshot), staff invite/roles, menu CRUD with
-  `size_class`/`spill_risk`/`travels_well` labels.
+  `size_class`/`travels_well` labels.
 - `Transition()` state machine (§5): guarded `UPDATE ... WHERE status=from`,
   `order_events` append, River timeouts (`merchant_accept_timeout`),
   post-commit WS broadcast. Unit-test every allowed/forbidden transition.
@@ -62,8 +62,8 @@ sandbox webhooks, Meta Model API, Google Routes API.
 
 ### B4 — Dispatch + delivery completion
 
-- PostGIS `DispatchCandidates` (corridor 400/800 m, to-pickup, trip, size/spill
-  filters, `goal_left_m`, anti-double-assign), scoring + cascade (size 3),
+- PostGIS `DispatchCandidates` (corridor 400/800 m, to-pickup, trip, size
+  filter, `goal_left_m`, anti-double-assign), scoring + cascade (size 3),
   atomic accept, `offer_expire`/`search_timeout`/`staff_timeout` River jobs,
   "leave now" nudge timed to `ready_at_est`.
 - Pickup code, PIN/photo handover, settlement on delivered, `auto_complete`

@@ -34,6 +34,8 @@ for (const path of ['/merchant/orders', '/accept', '/reject', '/ready', '/ws/tic
   check(src.includes(path), `orders feature calls ${path}`);
 }
 check(ordersPage.includes('unlockKitchenAudio') && ordersPage.includes('Start receiving') === false, 'sound unlock wired via helper (no raw audio before tap)');
+check(openapi.includes('getMerchantOrder'), 'openapi has merchant order detail on its own path (no /customer detour)');
+check(ordersPage.includes('order.delivery?.status') && ordersPage.includes('order.delivery?.eta_s'), 'courier line reads the real delivery status + ETA from list rows');
 check(ordersPage.includes('wakeLock'), 'kitchen requests screen wake lock');
 // Earnings derive locally from the order list: no invented payout endpoint.
 check(!ordersApi.includes('/payout') && !ordersApi.includes('/earning'), 'no invented earnings endpoint (local summary is correct)');
@@ -78,6 +80,24 @@ for (const l of locales) {
 }
 const enOrders = JSON.parse(readFileSync(join(root, 'src/locales/en.json'), 'utf8')).orders;
 check(!/courier/i.test(enOrders.showCode) && !/courier/i.test(enOrders.courierNotified), 'order ops address runner/biker, not "courier"');
+
+// 6. Agreement review states: approved/rejected labels + banners come from the
+// API status, and the page live-updates on the admin decision.
+const agreeSrc = readFileSync(join(root, 'src/features/setup/AgreementPage.tsx'), 'utf8');
+const agreeSocket = readFileSync(join(root, 'src/features/orders/socket.ts'), 'utf8');
+check(agreeSrc.includes('signedApproved') && agreeSrc.includes('signedRejected'), 'Agreement button tracks approved/rejected');
+check(agreeSrc.includes('agree.submittedApproved') || agreeSrc.includes('submittedApproved'), 'Agreement shows the approved banner');
+check(agreeSrc.includes('agree.submittedRejected') || agreeSrc.includes('submittedRejected'), 'Agreement shows the rejected banner');
+check(agreeSocket.includes('merchant.status'), 'Merchant socket types the agreement decision');
+for (const l of locales) {
+  const json = JSON.parse(readFileSync(join(root, `src/locales/${l}.json`), 'utf8'));
+  check(Boolean(json.agree?.signedApproved) && Boolean(json.agree?.signedRejected) && Boolean(json.agree?.submittedApproved) && Boolean(json.agree?.submittedRejected), `${l}.json has agreement review strings`);
+}
+
+// 7. A6 sanctions: the status badge stays green only for approved stores —
+// banned (and other non-live states) render honestly instead of lit green.
+const statusPageSrc = readFileSync(join(root, 'src/App.tsx'), 'utf8');
+check(statusPageSrc.includes('status === "approved"'), 'status badge is green only for approved stores');
 
 if (failures > 0) {
   console.error(`\n${failures} smoke check(s) failed`);

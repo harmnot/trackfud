@@ -1,18 +1,44 @@
 :80 {
-	handle /api/* {
+	# Bare app paths (no trailing slash) 301 to the canonical subpath so
+	# e.g. /courier and /courier/ both work. Query strings are preserved.
+	redir /back-office /back-office/ permanent
+	redir /customer /customer/ permanent
+	redir /courier /courier/ permanent
+	redir /merchant /merchant/ permanent
+	@api {
+		path /api
+		path /api/*
+	}
+	handle @api {
 		uri strip_prefix /api
 		reverse_proxy tf-backend:8080
 	}
-	handle /back-office/* {
+	@backoffice {
+		path /back-office
+		path /back-office/*
+	}
+	handle @backoffice {
 		reverse_proxy tf-back-office:80
 	}
-	handle /customer/* {
+	@customer {
+		path /customer
+		path /customer/*
+	}
+	handle @customer {
 		reverse_proxy tf-customer:80
 	}
-	handle /courier/* {
+	@courier {
+		path /courier
+		path /courier/*
+	}
+	handle @courier {
 		reverse_proxy tf-courier:80
 	}
-	handle /merchant/* {
+	@merchant {
+		path /merchant
+		path /merchant/*
+	}
+	handle @merchant {
 		reverse_proxy tf-merchant:80
 	}
 	respond "Trackfud gateway: open /back-office/ /customer/ /courier/ /merchant/" 200

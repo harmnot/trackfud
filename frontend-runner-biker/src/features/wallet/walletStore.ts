@@ -59,7 +59,12 @@ export const useWallet = create<WalletState>((set, get) => ({
   },
   sync: async () => {
     try {
-      const [earnings, history] = await Promise.all([fetchEarnings(), listWithdrawals()]);
+      // Server withdrawals paginate; the store keeps the newest page (20)
+      // for balance context while the IDB ledger stays the offline mirror.
+      const [earnings, history] = await Promise.all([
+        fetchEarnings(),
+        listWithdrawals({ page: 1, perPage: 20 }),
+      ]);
       const server: ServerBalance[] = earnings.map((e) => ({
         currency: e.currency,
         balanceMinor: e.balance.amount_minor,
@@ -70,7 +75,7 @@ export const useWallet = create<WalletState>((set, get) => ({
       set({
         server,
         serverLoaded: true,
-        withdrawals: history,
+        withdrawals: history.rows,
         currency: primary ? primary.currency : get().currency,
       });
     } catch (err) {

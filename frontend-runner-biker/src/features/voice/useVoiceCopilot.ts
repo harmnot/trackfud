@@ -18,8 +18,10 @@ import { voiceRelay } from './voiceRelay';
 /** Transport for voice audio. `'server'` is the B6 relay, live now. */
 export type VoiceBackend = 'server' | 'local-fallback';
 
-/** Backend voice endpoint (openapi `voiceConnect` + `voiceConfirm`). */
-export const VOICE_WS_PATH = '/v1/courier/voice';
+/** Backend voice endpoint (openapi `voiceConnect` + `voiceConfirm`).
+ * Served under the API base (`/api/v1/courier/voice` same-origin; the relay
+ * in `voiceRelay.ts` honours `VITE_API_BASE` for custom deploys). */
+export const VOICE_WS_PATH = '/api/v1/courier/voice';
 
 /** Current transport. The relay is tried first; local parser on failure. */
 export const VOICE_BACKEND: VoiceBackend = 'server';

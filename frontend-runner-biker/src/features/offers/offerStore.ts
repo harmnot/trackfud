@@ -61,7 +61,6 @@ export function demoOffer(args: { mode: 'runner' | 'biker'; currency: string }):
     feeMinor,
     currency: args.currency,
     sizeClass: 'M',
-    spillRisk: 'low',
     mode: args.mode,
     expiresAt: Date.now() + OFFER_WINDOW_S * 1000,
     demo: true,

@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { Button, Dropdown, Field, Note, Page } from '../components/ui';
+import { Button, Dropdown, Field, Note, Page, TextInput } from '../components/ui';
 import { useStaff, type StaffTravel } from '../features/staff/staffStore';
 import { fetchMemberships, setStaffShift } from '../features/delivery/courierApi';
 import { fetchMe } from '../features/profile/profileApi';
@@ -139,7 +139,7 @@ export function StaffPage(): React.JSX.Element {
               />
             </Field>
             <Field label={t('staff.name')}>
-              <input className="tb-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Sari" />
+              <TextInput value={name} onChange={setName} placeholder="Sari" />
             </Field>
             <Field label={t('staff.travel')}>
               <Dropdown

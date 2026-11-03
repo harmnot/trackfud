@@ -5,27 +5,62 @@
  * deliveries and earnings after the fitness test + CMS review.
  * All data comes from the API — nothing is invented on the client.
  */
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { Badge, Button, Note, Page, Stat } from '../components/ui';
 import { img } from '../components/ui';
-import { savedUser, setSession } from '../lib/api';
+import { logout, savedUser, setSession } from '../lib/api';
+import { formatSubmittedAt } from '../lib/format';
+import { socket } from '../lib/ws';
 import {
   fetchApplication,
   fetchMe,
   fetchProfile,
   formatAddress,
   partnerStateOf,
+  standingOf,
 } from '../features/profile/profileApi';
 
 export function StatusPage(): React.JSX.Element {
   const { t } = useTranslation();
   const user = savedUser();
+  const qc = useQueryClient();
+  const [fresh, setFresh] = useState('');
 
   const meQ = useQuery({ queryKey: ['account-me'], queryFn: fetchMe, enabled: Boolean(user) });
   const profileQ = useQuery({ queryKey: ['account-profile'], queryFn: fetchProfile, enabled: Boolean(user) });
-  const appQ = useQuery({ queryKey: ['account-application'], queryFn: fetchApplication, enabled: Boolean(user) });
+  const appQ = useQuery({
+    queryKey: ['account-application'],
+    queryFn: fetchApplication,
+    enabled: Boolean(user),
+    // Poll lightly so an admin decision lands here even when the socket
+    // drops; the socket (below) is the live path.
+    refetchInterval: 30_000,
+  });
+
+  // Live review updates: the backend broadcasts
+  // {"type":"application.status","status":"approved"|...} on decide and
+  // {"type":"courier.status","status":"frozen"|...} on sanction (each
+  // transaction also queues the decision email + push), so refetch here
+  // and surface a notice — the on-screen mirror of that notification.
+  const authed = user !== null;
+  useEffect(() => {
+    if (!authed) return;
+    void socket.connect();
+    const off = socket.onMessage((m) => {
+      if (m.type === 'application.status' || m.type === 'courier.status') {
+        void qc.invalidateQueries({ queryKey: ['account-application'] });
+        void qc.invalidateQueries({ queryKey: ['account-profile'] });
+        void qc.invalidateQueries({ queryKey: ['partner-application'] });
+        setFresh(m.status);
+      }
+    });
+    return () => {
+      off();
+    };
+  }, [qc, authed]);
 
   if (!user) {
     return (
@@ -49,6 +84,8 @@ export function StatusPage(): React.JSX.Element {
   const profile = profileQ.data?.profile;
   const app = appQ.data;
   const partner = partnerStateOf(app?.status);
+  const standing = standingOf(app, profileQ.data);
+  const sanctioned = standing === 'frozen' || standing === 'banned';
   const mode = app?.mode ?? profileQ.data?.mode ?? 'runner';
   const address = formatAddress(profile?.address);
   const displayName = (me?.name || profile?.legal_name || '').trim();
@@ -61,7 +98,7 @@ export function StatusPage(): React.JSX.Element {
       <div className="tb-hero mt-3" style={{ minHeight: 140 }}>
         <img src={img('mode-bike.jpg')} alt="" />
         <div className="tb-hero-body">
-          <span className="tb-kicker">{app?.status ?? '…'}</span>
+          <span className="tb-kicker">{standing || app?.status || '…'}</span>
           <p className="tb-hero-title" style={{ fontSize: '1.3rem' }}>
             {mode === 'biker' ? t('status.bikerLabel') : t('status.runnerLabel')}
           </p>
@@ -148,7 +185,39 @@ export function StatusPage(): React.JSX.Element {
 
             {partner === 'pending' && (
               <div className="mt-3 flex flex-col gap-2">
+                <div role="status" aria-live="polite">
+                  <Note tone="info">
+                    {t('account.submitted', {
+                      defaultValue: 'Already submitted by {{name}} on {{date}} — waiting for approval.',
+                      name: displayName || me?.email || '',
+                      date: formatSubmittedAt(app?.submitted_at),
+                    })}
+                  </Note>
+                </div>
                 <Note tone="info">{t('account.partnerPending')}</Note>
+                {fresh !== '' && (
+                  <div role="status" aria-live="polite">
+                    <Note tone="info">
+                      {t('account.updated', {
+                        defaultValue: 'Status update: {{s}}. The review team also emailed you.',
+                        s: fresh,
+                      })}
+                    </Note>
+                  </div>
+                )}
+                {/* Locked until the admin decides: resubmits are rejected
+                    server-side too, so the actions stay disabled, not hidden. */}
+                <Button variant="soft" block disabled>
+                  {t('account.fitnessCta')}
+                </Button>
+                <Button variant="pine" block disabled>
+                  {t('account.continuePartner')}
+                </Button>
+                <p className="tb-sub">
+                  {t('account.pendingLocked', {
+                    defaultValue: 'The fitness test and application are locked until the review team approves or rejects this submission.',
+                  })}
+                </p>
                 <Link to="/run-setup" className="tb-btn tb-btn-soft tb-btn-block">{t('account.startTracking')}</Link>
               </div>
             )}
@@ -156,8 +225,39 @@ export function StatusPage(): React.JSX.Element {
             {partner === 'approved' && (
               <div className="mt-3 flex flex-col gap-2">
                 <Note tone="info">{t('account.partnerApproved')}</Note>
-                <Link to="/delivery" className="tb-btn tb-btn-pine tb-btn-block">{t('nav.delivery')}</Link>
+                {!sanctioned && (
+                  <Link to="/delivery" className="tb-btn tb-btn-pine tb-btn-block">{t('nav.delivery')}</Link>
+                )}
                 <Link to="/wallet" className="tb-btn tb-btn-soft tb-btn-block">{t('account.walletCta')}</Link>
+              </div>
+            )}
+
+            {sanctioned && (
+              <div className="mt-3 flex flex-col gap-2" role="status" aria-live="polite">
+                <Note tone="error">
+                  {standing === 'frozen'
+                    ? t('account.frozen', {
+                        defaultValue:
+                          'Your courier account is temporarily frozen — you cannot go online or receive offers. Contact the review team to appeal.',
+                      })
+                    : t('account.banned', {
+                        defaultValue:
+                          'Your courier account is permanently closed. You cannot go online or receive offers.',
+                      })}
+                </Note>
+                <Note tone="info">
+                  {t('account.sanctionWallet', {
+                    defaultValue: 'Money you already earned stays withdrawable.',
+                  })}
+                </Note>
+                {fresh !== '' && (
+                  <Note tone="info">
+                    {t('account.updated', {
+                      defaultValue: 'Status update: {{s}}. The review team also emailed you.',
+                      s: fresh,
+                    })}
+                  </Note>
+                )}
               </div>
             )}
 
@@ -181,8 +281,10 @@ export function StatusPage(): React.JSX.Element {
           variant="danger"
           block
           onClick={() => {
-            setSession(null);
-            location.href = '/courier/login';
+            void logout().finally(() => {
+              setSession(null);
+              location.href = '/courier/login';
+            });
           }}
         >
           {t('auth.logout')}

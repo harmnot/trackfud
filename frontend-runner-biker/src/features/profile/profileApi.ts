@@ -33,10 +33,12 @@ export type CourierProfile = {
   status?: string;
 };
 
-/** `GET /courier/profile` envelope. */
+/** `GET /courier/profile` envelope. `status` is the review state;
+ * `standing` is the operational standing (frozen/banned) from sanctions. */
 export type ProfileResponse = {
   status: string;
   mode: string;
+  standing?: string | null;
   profile: CourierProfile;
 };
 
@@ -44,9 +46,18 @@ export type ProfileResponse = {
 export type Application = {
   status: string;
   mode: string;
+  standing?: string | null;
   reject_reason?: string;
   fitness?: { passed: boolean };
+  submitted_at?: string | null;
+  updated_at?: string | null;
 };
+
+/** Operational standing written by admin sanctions; empty when none. */
+export function standingOf(app: Application | undefined, profile: ProfileResponse | undefined): string {
+  const raw = app?.standing ?? profile?.standing ?? '';
+  return raw === 'frozen' || raw === 'banned' ? raw : '';
+}
 
 /** Partner lifecycle seen by ordinary runner/biker accounts. */
 export type PartnerState = 'none' | 'draft' | 'pending' | 'approved' | 'rejected';

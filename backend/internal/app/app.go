@@ -17,8 +17,11 @@ import (
 
 	"Trackfud/internal/authjwt"
 	"Trackfud/internal/config"
+	"Trackfud/internal/storage"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
 )
 
 // Server holds dependencies (constructor injection).
@@ -28,13 +31,23 @@ type Server struct {
 	log  *slog.Logger
 	hub  *Hub
 	ai   *AIService
+	st   storage.Store
+	rq   *river.Client[pgx.Tx]
 	rlMu sync.Mutex
 	rl   map[string][]time.Time
 }
 
-// New builds a Server.
+// New builds a Server. The River client is built here (no I/O); call
+// StartWorker to run it. A nil db (unit tests) leaves rq unset and enqueue
+// helpers refuse loudly instead of panicking.
 func New(cfg *config.Config, db *pgxpool.Pool, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, db: db, log: log, hub: NewHub(), ai: newAIService(aiConfigOf(cfg)), rl: map[string][]time.Time{}}
+	s := &Server{cfg: cfg, db: db, log: log, hub: NewHub(), ai: newAIService(aiConfigOf(cfg)), st: storage.New(cfg), rl: map[string][]time.Time{}}
+	if db != nil {
+		if err := s.initRiver(); err != nil {
+			log.Warn("river init failed (jobs disabled)", "err", err)
+		}
+	}
+	return s
 }
 
 // Hub returns the websocket hub.
@@ -73,6 +86,10 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, dir string) error {
 			return err
 		}
 	}
+	// River's own tables (river_job et al.) for the background workers.
+	if err := migrateRiver(ctx, db); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -86,10 +103,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/auth/refresh", s.rate(s.refresh))
 	mux.HandleFunc("POST /v1/auth/logout", s.auth(s.logout))
 	mux.HandleFunc("POST /v1/auth/demo-login", s.rate(s.demoLogin))
-	mux.HandleFunc("POST /v1/auth/verify-email", s.verifyEmail)
+	mux.HandleFunc("POST /v1/auth/verify-email", s.rate(s.verifyEmail))
 	mux.HandleFunc("GET /v1/auth/me", s.auth(s.me))
 	mux.HandleFunc("POST /v1/files/presign", s.auth(s.presign))
 	mux.HandleFunc("PUT /v1/files/local/{id}", s.localUpload)
+	mux.HandleFunc("POST /v1/files/{id}/complete", s.auth(s.completeUpload))
 	mux.HandleFunc("GET /v1/files/{id}/content", s.fileContent)
 	mux.HandleFunc("GET /v1/push/vapid-public-key", s.vapidKey)
 	mux.HandleFunc("POST /v1/push/subscribe", s.auth(s.pushSubscribe))
@@ -98,6 +116,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/ws/ticket", s.auth(s.wsTicket))
 	mux.HandleFunc("GET /v1/ws", s.wsConnect)
 	mux.HandleFunc("GET /v1/customer/restaurants", s.listRestaurants)
+	mux.HandleFunc("GET /v1/customer/categories", s.listCustomerCategories)
 	mux.HandleFunc("GET /v1/customer/restaurants/{id}", s.getRestaurant)
 	mux.HandleFunc("GET /v1/customer/restaurants/{id}/menu", s.getMenu)
 	mux.HandleFunc("GET /v1/customer/addresses", s.auth(s.listAddresses))
@@ -146,13 +165,20 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/admin/merchants/{id}", s.auth(s.getMerchantDetail))
 	mux.HandleFunc("POST /v1/admin/merchants/{id}/approve", s.auth(func(w http.ResponseWriter, r *http.Request) { s.decideMerchant(w, r, true) }))
 	mux.HandleFunc("POST /v1/admin/merchants/{id}/reject", s.auth(func(w http.ResponseWriter, r *http.Request) { s.decideMerchant(w, r, false) }))
+	mux.HandleFunc("GET /v1/admin/merchants/{id}/sanctions", s.auth(s.listMerchantSanctions))
+	mux.HandleFunc("POST /v1/admin/merchants/{id}/sanctions", s.auth(s.sanctionMerchant))
 	mux.HandleFunc("GET /v1/admin/couriers/{user_id}/sanctions", s.auth(s.listSanctions))
 	mux.HandleFunc("POST /v1/admin/couriers/{user_id}/sanctions", s.auth(s.sanctionCourier))
+	mux.HandleFunc("GET /v1/admin/orders", s.auth(s.listAdminOrders))
+	mux.HandleFunc("GET /v1/admin/orders/{id}", s.auth(s.getAdminOrder))
+	mux.HandleFunc("POST /v1/admin/orders/{id}/refund", s.auth(s.refundAdminOrder))
 	mux.HandleFunc("POST /v1/merchant/merchants", s.auth(s.createMerchant))
 	mux.HandleFunc("GET /v1/merchant/merchants/me", s.auth(s.myMerchant))
 	mux.HandleFunc("PATCH /v1/merchant/merchants/me", s.auth(s.updateMerchant))
 	mux.HandleFunc("GET /v1/merchant/agreement/current", s.currentAgreement)
+	mux.HandleFunc("GET /v1/merchant/merchants/me/agreement", s.auth(s.getMyAgreement))
 	mux.HandleFunc("POST /v1/merchant/merchants/me/agreement", s.auth(s.signAgreement))
+	mux.HandleFunc("GET /v1/merchant/earnings", s.auth(s.getMerchantEarnings))
 	mux.HandleFunc("GET /v1/merchant/staff", s.auth(s.listStaff))
 	mux.HandleFunc("POST /v1/merchant/staff/invite", s.auth(s.inviteStaff))
 	mux.HandleFunc("PATCH /v1/merchant/staff/{id}", s.auth(s.updateStaff))
@@ -171,7 +197,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/customer/wallet", s.auth(s.getWallet))
 	mux.HandleFunc("POST /v1/customer/wallet/topups", s.auth(s.createTopup))
 	mux.HandleFunc("GET /v1/customer/wallet/topups", s.auth(s.listTopups))
-	mux.HandleFunc("POST /v1/webhooks/paddle", s.paddleWebhook)
+	mux.HandleFunc("POST /v1/customer/payments/{id}/checkout", s.auth(s.createPaymentCheckout))
+	mux.HandleFunc("GET /v1/customer/payments/{id}", s.auth(s.getPayment))
+	mux.HandleFunc("POST /v1/webhooks/paddle", s.rate(s.paddleWebhook))
 	mux.HandleFunc("GET /v1/courier/earnings", s.auth(s.getEarnings))
 	mux.HandleFunc("POST /v1/courier/withdrawals", s.auth(s.createWithdrawal))
 	mux.HandleFunc("GET /v1/courier/withdrawals", s.auth(s.listWithdrawals))
@@ -181,10 +209,15 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/admin/withdrawals/{id}/release", s.auth(s.releaseWithdrawal))
 	mux.HandleFunc("POST /v1/dev/payments/{id}/simulate-paid", s.auth(s.simulatePaddlePaid))
 	mux.HandleFunc("GET /v1/merchant/orders", s.auth(s.listMerchantOrders))
+	mux.HandleFunc("GET /v1/merchant/orders/{id}", s.auth(s.getMerchantOrder))
 	mux.HandleFunc("POST /v1/merchant/orders/{id}/accept", s.auth(s.acceptOrder))
 	mux.HandleFunc("POST /v1/merchant/orders/{id}/reject", s.auth(s.rejectOrder))
 	mux.HandleFunc("POST /v1/merchant/orders/{id}/ready", s.auth(s.readyOrder))
-	mux.HandleFunc("GET /v1/dev/outbox", s.devOutbox)
+	mux.HandleFunc("POST /v1/merchant/orders/{id}/cancel", s.auth(s.cancelMerchantOrder))
+	mux.HandleFunc("GET /v1/fx/currencies", s.auth(s.listCurrencies))
+	mux.HandleFunc("GET /v1/fx/rate", s.auth(s.getFxRate))
+	mux.HandleFunc("GET /v1/fx/payout-info", s.auth(s.payoutInfo))
+	mux.HandleFunc("GET /v1/dev/outbox", s.auth(s.devOutbox))
 	// B6: AI + voice + demo controls.
 	mux.HandleFunc("POST /v1/merchant/menu/import-jobs", s.auth(s.createImportJob))
 	mux.HandleFunc("GET /v1/merchant/menu/import-jobs/{id}", s.auth(s.getImportJob))
@@ -194,6 +227,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/customer/orders/{id}/messages/translate", s.auth(s.translateCustomerMessage))
 	mux.HandleFunc("POST /v1/courier/deliveries/{id}/messages/translate", s.auth(s.translateCourierMessage))
 	mux.HandleFunc("GET /v1/courier/coach/weekly", s.auth(s.coachWeekly))
+	mux.HandleFunc("GET /v1/courier/run-plans/hotspots", s.auth(s.listHotspots))
+	mux.HandleFunc("POST /v1/courier/run-plans", s.auth(s.createRunPlans))
 	mux.HandleFunc("GET /v1/courier/voice", s.voiceConnect)
 	mux.HandleFunc("POST /v1/courier/voice/confirm", s.auth(s.voiceConfirm))
 	mux.HandleFunc("GET /v1/admin/demo/state", s.auth(s.demoState))
@@ -202,12 +237,24 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/admin/demo/force-no-courier", s.auth(s.demoForceNoCourier))
 	mux.HandleFunc("POST /v1/admin/demo/reset", s.auth(s.demoReset))
 	mux.HandleFunc("GET /v1/dev/deliveries/{id}/codes", s.auth(s.devDeliveryCodes))
+	mux.HandleFunc("GET /v1/dev/push-log", s.auth(s.devPushLog))
+	// A9: platform controls (settings per country, audit log, AI usage, copilot).
+	mux.HandleFunc("GET /v1/admin/settings", s.auth(s.getAdminSettings))
+	mux.HandleFunc("PUT /v1/admin/settings", s.auth(s.putAdminSetting))
+	mux.HandleFunc("GET /v1/admin/audit", s.auth(s.listAdminAudit))
+	mux.HandleFunc("GET /v1/admin/ai/calls", s.auth(s.listAdminAICalls))
+	mux.HandleFunc("GET /v1/admin/ai/summary", s.auth(s.adminAISummary))
+	mux.HandleFunc("POST /v1/admin/copilot/ask", s.auth(s.copilotAsk))
+	// A8: dashboard live map + numbers, courier performance (PLAN §4.4 P0).
+	mux.HandleFunc("GET /v1/admin/dashboard", s.auth(s.getAdminDashboard))
+	mux.HandleFunc("GET /v1/admin/couriers/{user_id}/performance", s.auth(s.getCourierPerformance))
 	return s.withLog(mux)
 }
 
 func (s *Server) withLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Same-origin deployment: no CORS. Only reflect for local vite dev ports.
+		w.Header().Set("Vary", "Origin")
 		if o := r.Header.Get("Origin"); strings.HasPrefix(o, "http://localhost:") || strings.HasPrefix(o, "http://127.0.0.1:") {
 			w.Header().Set("Access-Control-Allow-Origin", o)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -227,14 +274,40 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicConfig(w http.ResponseWriter, r *http.Request) {
+	// A9: ?country= merges that country's admin overrides (global always
+	// applies), so the courier fitness screen, merchant fee display and the
+	// customer promise always match what the CMS settings editor saved.
+	country := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("country")))
+	if len(country) != 2 || !isAlpha2(country) {
+		country = ""
+	}
+	runnerD := s.effectiveQualTarget(r.Context(), "runner", country)
+	runnerL := s.effectiveQualLimit(r.Context(), "runner", country)
+	bikerD := s.effectiveQualTarget(r.Context(), "biker", country)
+	bikerL := s.effectiveQualLimit(r.Context(), "biker", country)
+	_, winMin, winMax := s.effectiveOrderWindows(r.Context(), country)
+	goal := s.effectiveHealthGoal(r.Context(), country)
 	writeJSON(w, 200, map[string]any{
 		"demo_mode": s.cfg.Server.DemoMode,
+		"country":   country,
+		// Paddle publishables for the PWAs: the provider gate, the env the
+		// dashboard app lives in, and the client token when configured (a public
+		// key by design — never the webhook secret or API key). The PWA prefers
+		// its build-time VITE_PADDLE_* vars and falls back to these so sandbox
+		// vs production mismatches surface as a clear message, not a silent overlay fail.
+		"payments": map[string]any{
+			"provider":            s.cfg.Payments.Provider,
+			"paddle_env":          s.cfg.PaddleEnv,
+			"paddle_client_token": s.cfg.PaddleClientToken,
+			"card_enabled":        s.cardPaymentsEnabled(),
+		},
 		"fitness": map[string]any{
-			"runner_distance_m": s.cfg.Fitness.RunnerDistanceM, "runner_moving_limit_s": s.cfg.Fitness.RunnerMovingLimitS,
-			"biker_distance_m": s.cfg.Fitness.BikerDistanceM, "biker_moving_limit_s": s.cfg.Fitness.BikerMovingLimitS,
+			"runner_distance_m": runnerD, "runner_moving_limit_s": runnerL,
+			"biker_distance_m": bikerD, "biker_moving_limit_s": bikerL,
 			"elapsed_cap_multiplier": s.cfg.Fitness.ElapsedCapMultiplier,
 		},
-		"promise": map[string]any{"delivery_window_min_min": 30, "delivery_window_max_min": 60},
+		"promise": map[string]any{"delivery_window_min_min": winMin, "delivery_window_max_min": winMax},
+		"health":  map[string]any{"who_weekly_active_min": goal},
 	})
 }
 
@@ -256,6 +329,9 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 		return true
 	}
 	defer r.Body.Close()
+	// Cap JSON bodies: every contract body is small (largest is a menu
+	// publish), so a 1 MiB reader stops giant-body resource abuse early.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		problem(w, 400, "Bad request", "invalid JSON body")
 		return false
@@ -278,6 +354,16 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 		if err != nil {
 			problem(w, 401, "Unauthorized", "invalid or expired token")
 			return
+		}
+		// Platform isolation (defense in depth): a token issued for one
+		// platform cannot be replayed on another. Admins bypass so the CMS
+		// (App=cms) can still call merchant/customer endpoints that
+		// explicitly allow the admin role.
+		if reqApp := normalizeApp(r.Header.Get("X-TF-App")); reqApp != "" {
+			if tokApp := normalizeApp(c.App); tokApp != "" && reqApp != tokApp && !hasAdminRole(c.Roles) {
+				problem(w, 403, "Forbidden", "token issued for the "+platformName(c.App)+" platform cannot be used on the "+platformName(reqApp)+" platform")
+				return
+			}
 		}
 		ctx := context.WithValue(r.Context(), userKey, c)
 		next(w, r.WithContext(ctx))
@@ -316,10 +402,16 @@ func (s *Server) rate(next http.HandlerFunc) http.HandlerFunc {
 		}
 		if len(kept) >= 30 {
 			s.rlMu.Unlock()
+			w.Header().Set("Retry-After", "60")
 			problem(w, 429, "Too many requests", "rate limit exceeded, retry shortly")
 			return
 		}
 		s.rl[key] = append(kept, now)
+		// Bound the table: distinct IP+path keys accumulate over process
+		// lifetime, so a very large table resets (limits briefly loosen).
+		if len(s.rl) > 5000 {
+			s.rl = map[string][]time.Time{}
+		}
 		s.rlMu.Unlock()
 		next(w, r)
 	}

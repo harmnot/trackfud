@@ -2,13 +2,14 @@
     "name": "frontend-cms-admin",
     "version": "1.0.0",
     "description": "",
-    "packageManager": "pnpm@12.15.0",
+    "packageManager": "pnpm@12.16.1",
     "scripts": {
         "dev": "vite",
         "build": "tsc -b && vite build",
         "preview": "vite preview",
         "typecheck": "tsc -b --noEmit",
-        "smoke": "node scripts/route-smoke.mjs"
+        "smoke": "node scripts/route-smoke.mjs",
+        "guards": "node scripts/guard-smoke.mjs"
     },
     "author": "Muhammad",
     "private": true,

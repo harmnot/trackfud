@@ -13,6 +13,13 @@ export type SessionSetup = {
   goalValue: number;
   trackKind: TrackKind;
   trackName: string | null;
+  /** Saved-track id for `trackKind === 'saved'` (names are display-only). */
+  trackId: string | null;
+  /** AI-plan GeoJSON LineString for `trackKind === 'ai'` (drives dispatch). */
+  plannedTrack: { type: 'LineString'; coordinates: number[][] } | null;
+  /** Chosen AI plan id + name (display only; the GeoJSON is the contract). */
+  planId: string | null;
+  planName: string | null;
 };
 
 /** One accepted GPS fix inside the live session. */

@@ -18,37 +18,225 @@ func (s *Server) listRestaurants(w http.ResponseWriter, r *http.Request) {
 	if lat == 0 && lng == 0 {
 		lat, lng = -6.2088, 106.8456
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT id,name,currency,timezone,address,prep_minutes, ST_Distance(location, ST_SetSRID(ST_MakePoint($1,$2),4326)::geography) AS dist, ST_Y(location::geometry), ST_X(location::geometry) FROM merchants WHERE status='approved' AND location IS NOT NULL ORDER BY dist ASC`, lng, lat)
+	// Optional ?category= filters to merchants serving that menu category.
+	// Category names are per-merchant rows matched across locales (en/id/ms),
+	// so a global chip like "Minuman" matches every merchant carrying it.
+	category := strings.TrimSpace(r.URL.Query().Get("category"))
+	query := `SELECT id,name,currency,timezone,address,prep_minutes,country, ST_Distance(location, ST_SetSRID(ST_MakePoint($1,$2),4326)::geography) AS dist, ST_Y(location::geometry), ST_X(location::geometry) FROM merchants WHERE status='approved' AND location IS NOT NULL`
+	args := []any{lng, lat}
+	if category != "" {
+		args = append(args, category, category, category)
+		n := len(args) - 2
+		query += ` AND EXISTS (SELECT 1 FROM menu_categories mc WHERE mc.merchant_id=merchants.id AND (mc.name->>'en' ILIKE $` + strconv.Itoa(n) + ` OR mc.name->>'id' ILIKE $` + strconv.Itoa(n+1) + ` OR mc.name->>'ms' ILIKE $` + strconv.Itoa(n+2) + `))`
+	}
+	query += ` ORDER BY dist ASC`
+	rows, err := s.db.Query(r.Context(), query, args...)
 	if err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
 	}
 	defer rows.Close()
 	out := []map[string]any{}
+	heads := []merchantHead{}
 	for rows.Next() {
-		var id, name, cur, tz, addr string
-		var prep int
-		var dist, mlat, mlng float64
-		if err := rows.Scan(&id, &name, &cur, &tz, &addr, &prep, &dist, &mlat, &mlng); err != nil {
+		var h merchantHead
+		if err := rows.Scan(&h.id, &h.name, &h.cur, &h.tz, &h.addr, &h.prep, &h.country, &h.dist, &h.mlat, &h.mlng); err != nil {
 			continue
 		}
-		// availability heuristic for M1: approved merchants with staff can always serve.
-		badge := s.deliveryBadge(r.Context())
-		out = append(out, map[string]any{"id": id, "name": name, "currency": cur, "timezone": tz, "address": addr, "prep_minutes": prep, "distance_m": dist, "lat": mlat, "lng": mlng, "availability": badge, "delivery_window": "30-60 min"})
+		heads = append(heads, h)
+	}
+	rows.Close()
+	// One batched live-presence lookup for every listed merchant (no N+1):
+	// each badge reflects couriers online right now near that restaurant.
+	ids := make([]string, 0, len(heads))
+	for _, h := range heads {
+		ids = append(ids, h.id)
+	}
+	presence := s.livePresenceByMerchant(r.Context(), ids)
+	// Collected restaurant stars, aggregated in the same batched pass so the
+	// rating on every card is real data, never a placeholder.
+	ratings := s.merchantRatingsByMerchant(r.Context(), ids)
+	for _, h := range heads {
+		p := presence[h.id]
+		avg, count := ratingView(ratings[h.id].count, ratings[h.id].avg)
+		out = append(out, map[string]any{"id": h.id, "name": h.name, "currency": h.cur, "timezone": h.tz, "address": h.addr, "prep_minutes": h.prep, "distance_m": h.dist, "lat": h.mlat, "lng": h.mlng, "availability": p.availability, "live_couriers_count": p.count, "live_modes": p.modes, "live_nearest_m": p.nearestM, "rating_avg": avg, "rating_count": count, "delivery_window": "30-60 min"})
 	}
 	writeJSON(w, 200, map[string]any{"restaurants": out})
 }
 
-// deliveryBadge reports how a merchant can serve right now: runners_nearby
-// when any approved courier exists, else staff_only (staff fallback always
-// applies to approved merchants with staff). Shared by list and detail.
-func (s *Server) deliveryBadge(ctx context.Context) string {
-	var couriers int
-	_ = s.db.QueryRow(ctx, `SELECT count(*) FROM courier_applications WHERE status='approved'`).Scan(&couriers)
-	if couriers > 0 {
-		return "runners_nearby"
+// merchantRating is one restaurant's honest aggregate: the plain average of
+// collected restaurant_stars plus how many orders rated it. No Bayesian
+// shrinkage here (that rule is the CMS courier-performance page): a small
+// count renders next to the average so customers see exactly how much
+// signal stands behind it.
+type merchantRating struct {
+	avg   float64
+	count int
+}
+
+// ratingView shapes one aggregate for the wire: null average with a zero
+// count means "unrated" (the app shows New, never a made-up number).
+// Pure so the unrated-vs-rated shaping is unit-tested without a database.
+func ratingView(count int, avg float64) (any, int) {
+	if count <= 0 {
+		return nil, 0
 	}
-	return "staff_only"
+	return avg, count
+}
+
+// merchantRatingsByMerchant batches the restaurant-star aggregate for a set
+// of merchants: one grouped query over order_ratings, never one per
+// restaurant. Only non-null restaurant_stars count.
+func (s *Server) merchantRatingsByMerchant(ctx context.Context, ids []string) map[string]merchantRating {
+	out := map[string]merchantRating{}
+	if len(ids) == 0 {
+		return out
+	}
+	rows, err := s.db.Query(ctx, `SELECT o.merchant_id,
+		round(avg(r.restaurant_stars)::numeric,1)::float8, count(*)
+		FROM order_ratings r JOIN orders o ON o.id=r.order_id
+		WHERE o.merchant_id = ANY($1) AND r.restaurant_stars IS NOT NULL
+		GROUP BY 1`, ids)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var mr merchantRating
+		if err := rows.Scan(&id, &mr.avg, &mr.count); err == nil {
+			out[id] = mr
+		}
+	}
+	return out
+}
+
+// merchantHead is one listed restaurant row before the live badge is attached.
+type merchantHead struct {
+	id, name, cur, tz, addr string
+	prep                    int
+	dist, mlat, mlng        float64
+	country                 string
+}
+
+// merchantPresence is the live badge for one restaurant.
+type merchantPresence struct {
+	availability string
+	count        int
+	modes        []string
+	nearestM     *float64
+}
+
+// liveCourierSight is one online session near a merchant (raw pair row).
+type liveCourierSight struct {
+	mode  string
+	distM float64
+}
+
+// resolveLiveAvailability is pure: which sightings are close enough to earn
+// the badge, given the per-mode pickup radii. Near = within the sighting's
+// own mode radius (runner 1500 m / biker 3000 m defaults, CMS-overridable).
+// Unit-tested without a database.
+func resolveLiveAvailability(sights []liveCourierSight, runnerMaxM, bikerMaxM float64) merchantPresence {
+	p := merchantPresence{availability: "staff_only", modes: []string{}}
+	seen := map[string]bool{}
+	for _, sg := range sights {
+		max := bikerMaxM
+		if sg.mode != "biker" {
+			max = runnerMaxM
+		}
+		if sg.distM > max {
+			continue
+		}
+		p.count++
+		if !seen[sg.mode] {
+			seen[sg.mode] = true
+			p.modes = append(p.modes, sg.mode)
+		}
+		if p.nearestM == nil || sg.distM < *p.nearestM {
+			d := sg.distM
+			p.nearestM = &d
+		}
+	}
+	if p.count > 0 {
+		p.availability = "runners_bikers_nearby"
+	}
+	return p
+}
+
+// livePresenceByMerchant batches the live check for a set of merchants: one
+// indexed platform_settings lookup per country plus one PostGIS pair query,
+// never one query per restaurant. A courier counts as live exactly like
+// dispatch treats them: active work session, positioned within the last
+// 60 s, approved account, not currently carrying a delivery.
+func (s *Server) livePresenceByMerchant(ctx context.Context, ids []string) map[string]merchantPresence {
+	out := map[string]merchantPresence{}
+	if len(ids) == 0 {
+		return out
+	}
+	countries := map[string]string{}
+	crows, err := s.db.Query(ctx, `SELECT id, COALESCE(country,'') FROM merchants WHERE id = ANY($1)`, ids)
+	if err == nil {
+		defer crows.Close()
+		for crows.Next() {
+			var id, cc string
+			if err := crows.Scan(&id, &cc); err == nil {
+				countries[id] = cc
+			}
+		}
+	}
+	// Effective per-country dispatch radii (CMS overrides win, no restart).
+	dispatchByCountry := map[string]struct{ runner, biker float64 }{}
+	maxRadius := 0.0
+	for _, cc := range countries {
+		if _, ok := dispatchByCountry[cc]; ok {
+			continue
+		}
+		d := s.effectiveDispatch(ctx, cc)
+		dispatchByCountry[cc] = struct{ runner, biker float64 }{d.RunnerMaxToPickupM, d.BikerMaxToPickupM}
+		if d.RunnerMaxToPickupM > maxRadius {
+			maxRadius = d.RunnerMaxToPickupM
+		}
+		if d.BikerMaxToPickupM > maxRadius {
+			maxRadius = d.BikerMaxToPickupM
+		}
+	}
+	if maxRadius < 200 {
+		maxRadius = 3000
+	}
+	if maxRadius > 10000 {
+		maxRadius = 10000
+	}
+	sights := map[string][]liveCourierSight{}
+	prows, err := s.db.Query(ctx, `SELECT m.id, c.mode, ST_Distance(s.last_pos, m.location)::float8 AS dist_m
+		FROM merchants m
+		JOIN activity_sessions s ON s.kind='work' AND s.status='active'
+			AND s.last_seen_at > now() - interval '60 seconds'
+			AND s.last_pos IS NOT NULL
+			AND ST_DWithin(s.last_pos, m.location, $2)
+		JOIN couriers c ON c.user_id = s.courier_id AND c.status='approved'
+		LEFT JOIN deliveries d ON d.courier_id = s.courier_id
+			AND d.status IN ('assigned','at_pickup','picked_up','at_dropoff')
+		WHERE m.id = ANY($1) AND d.id IS NULL`, ids, maxRadius)
+	if err == nil {
+		defer prows.Close()
+		for prows.Next() {
+			var mid, mode string
+			var dist float64
+			if err := prows.Scan(&mid, &mode, &dist); err != nil {
+				continue
+			}
+			sights[mid] = append(sights[mid], liveCourierSight{mode: mode, distM: dist})
+		}
+	}
+	for _, id := range ids {
+		d := dispatchByCountry[countries[id]]
+		if d.runner == 0 && d.biker == 0 {
+			d.runner, d.biker = 1500, 3000
+		}
+		out[id] = resolveLiveAvailability(sights[id], d.runner, d.biker)
+	}
+	return out
 }
 
 func (s *Server) getRestaurant(w http.ResponseWriter, r *http.Request) {
@@ -64,8 +252,19 @@ func (s *Server) getRestaurant(w http.ResponseWriter, r *http.Request) {
 		problem(w, 404, "Not found", "restaurant not found")
 		return
 	}
+	// Live badge for this restaurant only: online couriers near it right now.
+	p := s.livePresenceByMerchant(r.Context(), []string{id})[id]
+	// Real collected stars for this restaurant (same batched aggregate).
+	ratings := s.merchantRatingsByMerchant(r.Context(), []string{id})
+	if p.availability == "" {
+		p.availability = "staff_only"
+		p.modes = []string{}
+	}
 	out := map[string]any{"id": id, "name": name, "currency": cur, "timezone": tz, "address": addr,
-		"pickup_note": note, "prep_minutes": prep, "lat": mlat, "lng": mlng, "availability": s.deliveryBadge(r.Context())}
+		"pickup_note": note, "prep_minutes": prep, "lat": mlat, "lng": mlng, "availability": p.availability,
+		"live_couriers_count": p.count, "live_modes": p.modes, "live_nearest_m": p.nearestM}
+	avg, count := ratingView(ratings[id].count, ratings[id].avg)
+	out["rating_avg"], out["rating_count"] = avg, count
 	if lat != 0 || lng != 0 {
 		out["distance_m"] = dist
 	}
@@ -79,7 +278,36 @@ func (s *Server) getMenu(w http.ResponseWriter, r *http.Request) {
 		problem(w, 404, "Not found", "restaurant not found")
 		return
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT id,name,description,price_minor,size_class,spill_risk,travels_well,photo_url,available FROM menu_items WHERE merchant_id=$1 ORDER BY name->>'en'`, id)
+	// Categories for the chip row (per-merchant rows, sort order preserved).
+	catRows, err := s.db.Query(r.Context(), `SELECT id, name, sort FROM menu_categories WHERE merchant_id=$1 ORDER BY sort, id`, id)
+	if err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	categories := []map[string]any{}
+	for catRows.Next() {
+		var cid string
+		var nameB []byte
+		var sort int
+		if err := catRows.Scan(&cid, &nameB, &sort); err != nil {
+			continue
+		}
+		var name map[string]string
+		_ = json.Unmarshal(nameB, &name)
+		categories = append(categories, map[string]any{"id": cid, "name": name, "sort": sort})
+	}
+	catRows.Close()
+	// Optional ?category_id= narrows the item list server-side so the
+	// customer chip row actually filters instead of paginating client-side.
+	categoryID := strings.TrimSpace(r.URL.Query().Get("category_id"))
+	itemQuery := `SELECT id,category_id,name,description,price_minor,size_class,travels_well,photo_url,available FROM menu_items WHERE merchant_id=$1`
+	itemArgs := []any{id}
+	if categoryID != "" {
+		itemQuery += ` AND category_id=$2`
+		itemArgs = append(itemArgs, categoryID)
+	}
+	itemQuery += ` ORDER BY name->>'en'`
+	rows, err := s.db.Query(r.Context(), itemQuery, itemArgs...)
 	if err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
@@ -87,19 +315,60 @@ func (s *Server) getMenu(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	items := []map[string]any{}
 	for rows.Next() {
-		var iid, size, spill, photo string
+		var iid, size, photo string
+		var cat *string
 		var nameB, descB []byte
 		var price int64
 		var tw, avail bool
-		if err := rows.Scan(&iid, &nameB, &descB, &price, &size, &spill, &tw, &photo, &avail); err != nil {
+		if err := rows.Scan(&iid, &cat, &nameB, &descB, &price, &size, &tw, &photo, &avail); err != nil {
 			continue
 		}
 		var name, desc map[string]string
 		_ = json.Unmarshal(nameB, &name)
 		_ = json.Unmarshal(descB, &desc)
-		items = append(items, map[string]any{"id": iid, "name": name, "description": desc, "price": map[string]any{"amount_minor": price, "currency": cur}, "size_class": size, "spill_risk": spill, "travels_well": tw, "photo_url": photo, "available": avail})
+		items = append(items, map[string]any{"id": iid, "category_id": cat, "name": name, "description": desc, "price": map[string]any{"amount_minor": price, "currency": cur}, "size_class": size, "travels_well": tw, "photo_url": photo, "available": avail})
 	}
-	writeJSON(w, 200, map[string]any{"merchant_id": id, "currency": cur, "items": items})
+	writeJSON(w, 200, map[string]any{"merchant_id": id, "currency": cur, "categories": categories, "items": items})
+}
+
+// listCustomerCategories returns the distinct menu-category names across
+// approved merchants so the customer chip row is API-driven, never hardcoded.
+// Grouped by the English name (per-merchant rows share names like "Minuman");
+// each entry carries one localized label map plus how many restaurants serve it.
+func (s *Server) listCustomerCategories(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.db.Query(r.Context(), `SELECT mc.name, COUNT(DISTINCT mc.merchant_id) AS restaurants
+		FROM menu_categories mc JOIN merchants m ON m.id=mc.merchant_id
+		WHERE m.status='approved'
+		GROUP BY mc.name->>'en', mc.name ORDER BY COUNT(DISTINCT mc.merchant_id) DESC, mc.name->>'en' ASC`)
+	if err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var nameB []byte
+		var count int
+		if err := rows.Scan(&nameB, &count); err != nil {
+			continue
+		}
+		var name map[string]string
+		_ = json.Unmarshal(nameB, &name)
+		label := name["en"]
+		if label == "" {
+			for _, v := range name {
+				if strings.TrimSpace(v) != "" {
+					label = v
+					break
+				}
+			}
+		}
+		if label == "" {
+			continue
+		}
+		out = append(out, map[string]any{"name": name, "label": label, "restaurant_count": count})
+	}
+	writeJSON(w, 200, map[string]any{"categories": out})
 }
 
 func (s *Server) listAddresses(w http.ResponseWriter, r *http.Request) {
@@ -334,7 +603,8 @@ func (s *Server) getApplication(w http.ResponseWriter, r *http.Request) {
 	var dist float64
 	var mov, ela, gap int
 	var passed bool
-	err := s.db.QueryRow(r.Context(), `SELECT mode,status,reject_reason,draft,fitness_distance_m,fitness_moving_s,fitness_elapsed_s,fitness_passed,fitness_flags,fitness_gap_max_s FROM courier_applications WHERE user_id=$1`, c.Sub).Scan(&mode, &status, &reason, &draft, &dist, &mov, &ela, &passed, &flags, &gap)
+	var submittedAt, updatedAt *time.Time
+	err := s.db.QueryRow(r.Context(), `SELECT mode,status,reject_reason,draft,fitness_distance_m,fitness_moving_s,fitness_elapsed_s,fitness_passed,fitness_flags,fitness_gap_max_s,submitted_at,updated_at FROM courier_applications WHERE user_id=$1`, c.Sub).Scan(&mode, &status, &reason, &draft, &dist, &mov, &ela, &passed, &flags, &gap, &submittedAt, &updatedAt)
 	if err != nil {
 		writeJSON(w, 200, map[string]any{"status": "none", "mode": "runner", "draft": map[string]any{}})
 		return
@@ -345,9 +615,12 @@ func (s *Server) getApplication(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(flags, &fl)
 	var checkpoints int
 	_ = s.db.QueryRow(r.Context(), `SELECT count(*) FROM checkpoint_photos cp JOIN activity_sessions s ON s.id=cp.session_id WHERE s.courier_id=$1`, c.Sub).Scan(&checkpoints)
-	writeJSON(w, 200, map[string]any{"mode": mode, "status": status, "reject_reason": reason, "draft": d,
+	var standing string
+	_ = s.db.QueryRow(r.Context(), `SELECT status FROM couriers WHERE user_id=$1`, c.Sub).Scan(&standing)
+	writeJSON(w, 200, map[string]any{"mode": mode, "status": status, "standing": standing, "reject_reason": reason, "draft": d,
 		"fitness": map[string]any{"distance_m": dist, "moving_s": mov, "elapsed_s": ela, "passed": passed,
-			"flags": fl, "max_gap_s": gap, "checkpoints": checkpoints}})
+			"flags": fl, "max_gap_s": gap, "checkpoints": checkpoints},
+		"submitted_at": tsOrNil(submittedAt), "updated_at": tsOrNil(updatedAt)})
 }
 
 func (s *Server) saveApplication(w http.ResponseWriter, r *http.Request) {
@@ -397,6 +670,19 @@ func (s *Server) submitFitness(w http.ResponseWriter, r *http.Request) {
 		Points         int     `json:"points"`
 	}
 	if !decode(w, r, &b) {
+		return
+	}
+	// Under review the test locks: the courier cannot submit again until
+	// the admin approves or rejects (mirrors the qualification-session gate).
+	// Approved partners never retake it (one-time gate, PLAN §8.2).
+	var appStatus string
+	_ = s.db.QueryRow(r.Context(), `SELECT status FROM courier_applications WHERE user_id=$1`, c.Sub).Scan(&appStatus)
+	if appStatus == "pending" || appStatus == "pending_review" {
+		problem(w, 409, "Conflict", "application under review; the fitness test unlocks after the review team approves or rejects it")
+		return
+	}
+	if appStatus == "approved" {
+		problem(w, 409, "Conflict", "already approved; the fitness test is a one-time gate and cannot be retaken")
 		return
 	}
 	cfg := s.cfg
@@ -466,12 +752,12 @@ func (s *Server) submitApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	var email string
 	_ = tx.QueryRow(r.Context(), `SELECT email FROM users WHERE id=$1`, c.Sub).Scan(&email)
-	queueApplicantJobs(r.Context(), tx, c.Sub, email,
+	s.queueApplicantJobs(r.Context(), tx, c.Sub, email,
 		"Your Trackfud courier application is under review",
 		"Thanks! Your fitness test passed and your application is now in the review queue. We will email you the decision.",
 		"Application under review")
 	// B6: advisory Trust Brief in the same transaction (advisory only).
-	_ = enqueueTx(r.Context(), tx, AIJobTrustBrief, fmt.Sprintf(`{"user_id":%q}`, c.Sub), time.Now())
+	_ = s.enqueueTx(r.Context(), tx, AIJobTrustBrief, fmt.Sprintf(`{"user_id":%q}`, c.Sub), time.Now())
 	if err := tx.Commit(r.Context()); err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
@@ -651,6 +937,20 @@ func (s *Server) signAgreement(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "Validation failed", "create your store profile first")
 		return
 	}
+	// Idempotency: the same version signed twice returns the original row
+	// so a double-tap can never create a duplicate signature.
+	var existingID string
+	var existingAt time.Time
+	err = s.db.QueryRow(r.Context(), `SELECT id, signed_at FROM merchant_agreements
+		WHERE merchant_id=$1 AND version=$2 AND agreed=true ORDER BY signed_at DESC LIMIT 1`,
+		m["id"], agreementVersion).Scan(&existingID, &existingAt)
+	if err == nil {
+		writeJSON(w, 200, map[string]any{
+			"id": existingID, "status": "pending", "version": agreementVersion,
+			"signed_at": existingAt.UTC().Format(time.RFC3339), "duplicate": true,
+		})
+		return
+	}
 	// Versioned e-sign: the exact text snapshot is stored with its sha256 so
 	// a future version change can force re-acceptance; signer IP/UA are kept
 	// for the audit trail.
@@ -720,7 +1020,7 @@ func (s *Server) inviteStaff(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "Server error", err.Error())
 		return
 	}
-	_, _ = s.db.Exec(r.Context(), `INSERT INTO jobs(kind,payload) VALUES('email_send',$1)`, fmt.Sprintf(`{"to":%q,"subject":"You are invited to Trackfud staff","body":"You were invited as staff. Sign up with this email to accept (demo)."}`, strings.ToLower(b.Email)))
+	s.enqueueNow(JobEmailSend, fmt.Sprintf(`{"to":%q,"subject":"You are invited to Trackfud staff","body":"You were invited as staff. Sign up with this email to accept (demo)."}`, strings.ToLower(b.Email)), time.Now())
 	writeJSON(w, 201, map[string]any{"id": id, "email": strings.ToLower(b.Email), "status": "invited"})
 }
 

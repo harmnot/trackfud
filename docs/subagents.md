@@ -39,3 +39,6 @@ anything not exercised is reported unverified, never passing.
   Async work → `river-job`. Contract changed → `api-sync` (parent runs it).
 - Frontend copy changed → `i18n-string`. Any PWA milestone done → `pwa-verify`
   for that app's path.
+- Multi-track feature/fix (2+ of backend/customer/courier/merchant/cms) →
+  `cross-track-sync` (parent runs it; it fans out via the recipes above and
+  reconciles `docs/milestone-checklist.md`).

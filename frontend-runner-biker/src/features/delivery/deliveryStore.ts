@@ -11,6 +11,8 @@ export function toActiveDelivery(env: DeliveryEnvelope): Omit<ActiveDelivery, 'p
     merchantName: d.pickup.merchant_name,
     feeMinor: env.payout?.amount_minor ?? 0,
     currency: env.payout?.currency ?? d.currency,
+    etaS: typeof d.eta_s === 'number' ? d.eta_s : null,
+    routeWarning: typeof d.route_warning === 'string' ? d.route_warning : null,
     demo: false,
   };
 }
@@ -40,6 +42,10 @@ export type ActiveDelivery = {
   merchantName: string;
   feeMinor: number;
   currency: string;
+  /** Live route ETA in seconds (null until the server plans the route). */
+  etaS: number | null;
+  /** Google WALK/BICYCLE beta disclaimer served with the leg. */
+  routeWarning: string | null;
   phase: DeliveryPhase;
   /** True while the backend leg is missing (local demo flow). */
   demo: boolean;
@@ -54,6 +60,7 @@ type DeliveryState = {
   assign: (delivery: Omit<ActiveDelivery, 'phase' | 'headNow' | 'readyInMin'>) => void;
   setPhase: (phase: DeliveryPhase) => void;
   nudgeHeadNow: (readyInMin: number | null) => void;
+  setEta: (etaS: number | null) => void;
   complete: () => void;
 };
 
@@ -71,6 +78,11 @@ export const useDelivery = create<DeliveryState>((set, get) => ({
     const cur = get().active;
     if (!cur) return;
     set({ active: { ...cur, headNow: true, readyInMin } });
+  },
+  setEta: (etaS) => {
+    const cur = get().active;
+    if (!cur || cur.etaS === etaS) return;
+    set({ active: { ...cur, etaS } });
   },
   complete: () => {
     const cur = get().active;

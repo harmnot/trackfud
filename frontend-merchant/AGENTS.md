@@ -30,7 +30,7 @@ unmissable order alerts (sound unlocked on "Start receiving orders" tap).
 - Photo upload (shrunk ≤1600 px) → import-job polling → editable review table
   (low-confidence cells highlighted, "I checked all prices" tick required before
   publish); items/prices/photos multilingual; sold-out toggle; `size_class` /
-  `spill_risk` / `travels_well` labels visible; pickup-only badge for
+  `travels_well` labels visible; pickup-only badge for
   non-travels-well items.
 - Menu CRUD (categories, items, options, allergens/dietary, photos via R2
   presigned PUT); available toggle; busy mode (longer prep) / pause store (P1).

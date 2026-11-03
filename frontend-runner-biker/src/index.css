@@ -63,6 +63,56 @@ input, select, textarea { color-scheme: dark; }
 .tb-input:hover { border-color: rgba(255, 255, 255, 0.2); }
 .tb-input:focus { outline: none; border-color: rgba(255, 255, 255, 0.45); box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.045); }
 .tb-input::placeholder { color: var(--tb-faint); }
+/* ============ design-system form kit (shared tb-* motion language) ============ */
+/* Modern native select: remove OS chrome, keep native picker on mobile. */
+select.tb-input {
+  appearance: none; -webkit-appearance: none;
+  padding-right: 2.6rem; cursor: pointer; line-height: 1.4;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 0.9rem center; background-size: 16px 16px;
+}
+select.tb-input:disabled { opacity: 0.5; cursor: not-allowed; }
+select.tb-input option { background: #141619; color: var(--tb-ink); }
+.tb-select { position: relative; display: block; width: 100%; }
+.tb-select-input { width: 100%; }
+.tb-select > svg { position: absolute; right: 0.9rem; top: 50%; width: 16px; height: 16px; transform: translateY(-50%); color: var(--tb-muted); fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; transition: transform 0.2s var(--tb-ease); }
+.tb-select:focus-within > svg { transform: translateY(-50%) rotate(180deg); color: var(--tb-ink); }
+/* Modern checkbox + segmented radio (native inputs, custom visuals, keyboard accessible). */
+.tb-check { display: inline-flex; align-items: flex-start; gap: 0.65rem; cursor: pointer; font-weight: 600; font-size: 0.88rem; line-height: 1.5; }
+.tb-check input { position: absolute; opacity: 0; width: 22px; height: 22px; margin: 0; }
+.tb-check .tb-box { flex-shrink: 0; width: 24px; height: 24px; border-radius: 8px; border: 1.5px solid var(--tb-line); background: rgba(255, 255, 255, 0.03); display: grid; place-items: center; transition: background 0.2s, border-color 0.2s, box-shadow 0.2s; margin-top: 1px; }
+.tb-check .tb-box svg { width: 14px; height: 14px; fill: none; stroke: #060709; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; opacity: 0; transform: scale(0.5); transition: opacity 0.15s, transform 0.2s var(--tb-spring); }
+.tb-check input:checked + .tb-box { background: #fff; border-color: #fff; box-shadow: 0 0 14px rgba(255, 255, 255, 0.25); }
+.tb-check input:checked + .tb-box svg { opacity: 1; transform: scale(1); }
+.tb-check input:focus-visible + .tb-box { outline: 2px solid var(--tb-link); outline-offset: 2px; }
+.tb-radio-group { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.tb-radio-pill { position: relative; display: inline-flex; align-items: center; border: 1px solid var(--tb-line); background: rgba(255, 255, 255, 0.025); color: var(--tb-muted); border-radius: var(--tb-r-pill); padding: 0.55rem 1rem; font-size: 0.84rem; font-weight: 700; cursor: pointer; transition: background 0.18s, color 0.18s, border-color 0.18s, box-shadow 0.18s; }
+.tb-radio-pill input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+.tb-radio-pill.on { background: #fff; color: #09090b; border-color: #fff; box-shadow: 0 0 18px rgba(255, 255, 255, 0.18); }
+.tb-radio-pill.on { animation: tb-pop 0.22s var(--tb-spring); }
+.tb-radio-pill:focus-within { outline: 2px solid var(--tb-link); outline-offset: 2px; }
+/* Field footnotes: hint + error share one slot under the control. */
+.tb-field-hint { display: block; font-size: 0.76rem; font-weight: 500; color: var(--tb-faint); margin-top: 0.35rem; line-height: 1.5; }
+.tb-field-error { display: block; font-size: 0.78rem; font-weight: 600; color: var(--tb-danger); margin-top: 0.35rem; line-height: 1.5; animation: tb-enter 0.25s var(--tb-ease) both; }
+.tb-input-error { border-color: rgba(251, 113, 133, 0.6) !important; }
+.tb-input-error:focus { border-color: var(--tb-danger); box-shadow: 0 0 0 3px rgba(251, 113, 133, 0.15); background: rgba(251, 113, 133, 0.05); }
+textarea.tb-input { min-height: 96px; resize: vertical; line-height: 1.5; }
+/* Custom radio dot for list/card rows (same motion language as .tb-check). */
+.tb-radio { position: relative; display: inline-flex; align-items: center; cursor: pointer; flex-shrink: 0; }
+.tb-radio input { position: absolute; opacity: 0; width: 22px; height: 22px; margin: 0; }
+.tb-radio-dot { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--tb-line); background: rgba(255, 255, 255, 0.03); display: grid; place-items: center; transition: border-color 0.2s, box-shadow 0.2s, background 0.2s; }
+.tb-radio-dot::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: #fff; transform: scale(0); transition: transform 0.18s var(--tb-spring); }
+.tb-radio input:checked + .tb-radio-dot { border-color: #fff; background: rgba(255, 255, 255, 0.06); box-shadow: 0 0 12px rgba(255, 255, 255, 0.25); }
+.tb-radio input:checked + .tb-radio-dot::after { transform: scale(1); animation: tb-pop 0.22s var(--tb-spring); }
+.tb-radio input:focus-visible + .tb-radio-dot { outline: 2px solid var(--tb-link); outline-offset: 2px; }
+/* Toggle switch. */
+.tb-switch { position: relative; display: inline-flex; align-items: center; gap: 0.55rem; cursor: pointer; font-weight: 600; font-size: 0.85rem; }
+.tb-switch input { position: absolute; opacity: 0; }
+.tb-switch .tb-track { width: 50px; height: 29px; border-radius: 15px; background: rgba(255, 255, 255, 0.08); border: 1px solid var(--tb-line); transition: background 0.25s, border-color 0.25s; position: relative; flex-shrink: 0; }
+.tb-switch .tb-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 23px; height: 23px; border-radius: 50%; background: var(--tb-muted); transition: transform 0.25s var(--tb-spring), background 0.25s, box-shadow 0.25s; }
+.tb-switch input:checked + .tb-track { background: #fff; border-color: #fff; }
+.tb-switch input:checked + .tb-track::after { transform: translateX(21px); background: #060709; animation: tb-pop 0.25s; box-shadow: 0 0 12px rgba(255, 255, 255, 0.5); }
+.tb-switch input:focus-visible + .tb-track { outline: 2px solid var(--tb-link); outline-offset: 2px; }
 input[type="radio"], input[type="checkbox"] { width: 20px; height: 20px; accent-color: #fff; }
 
 /* ============ dropdown ============ */
@@ -189,9 +239,17 @@ input[type="radio"], input[type="checkbox"] { width: 20px; height: 20px; accent-
 .tb-withdraw-btn { display: flex; align-items: flex-end; }
 
 /* ============ voice + tracks + chat + ratings (R3) ============ */
-.tb-drawpad { position: relative; min-height: 220px; border: 1px dashed var(--tb-line); border-radius: var(--tb-r-xl); background: rgba(255, 255, 255, 0.03); touch-action: none; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.tb-drawpad { position: relative; min-height: 220px; border: 1px dashed var(--tb-line); border-radius: var(--tb-r-xl); background: rgba(255, 255, 255, 0.03); touch-action: none; display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: crosshair; user-select: none; -webkit-user-select: none; }
 .tb-drawpad svg { position: absolute; inset: 0; width: 100%; height: 100%; color: var(--tb-warn); }
 .tb-track-thumb { width: 44px; height: 44px; flex: none; color: var(--tb-warn); }
+/* Sketch-on-map preview (Strava-art anchor + snapped road route). */
+.tb-map { position: relative; min-height: 260px; border: 1px solid var(--tb-line); border-radius: var(--tb-r-xl); overflow: hidden; background: rgba(255, 255, 255, 0.03); }
+.tb-map > div:first-child { position: absolute; inset: 0; }
+.tb-map-badge { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; font-size: 0.82rem; color: var(--tb-muted); background: rgba(6, 7, 9, 0.72); border: 1px solid var(--tb-soft-line); border-radius: var(--tb-r-md); padding: 0.5rem 0.9rem; max-width: 90%; text-align: center; }
+.tb-map-err { transform: translate(-50%, -50%); width: min(90%, 22rem); }
+@media (min-width: 720px) {
+  .tb-map { min-height: 320px; }
+}
 .tb-chat { display: flex; flex-direction: column; gap: 0.5rem; max-height: 46vh; overflow-y: auto; }
 .tb-chat-msg { max-width: 85%; padding: 0.6rem 0.8rem; border: 1px solid var(--tb-line); border-radius: var(--tb-r-lg); background: rgba(255, 255, 255, 0.04); align-self: flex-start; animation: tb-msg-in 0.3s var(--tb-ease) both; }
 .tb-chat-msg.mine { align-self: flex-end; background: rgba(255, 255, 255, 0.09); }
@@ -229,3 +287,49 @@ input[type="radio"], input[type="checkbox"] { width: 20px; height: 20px; accent-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* ============ courier orders (list + detail) ============ */
+.tb-orders-grid { display: flex; flex-direction: column; gap: 0.65rem; }
+.tb-order { display: block; padding: 0.9rem 1rem; border-radius: var(--tb-r-lg); background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015)); border: 1px solid var(--tb-soft-line); box-shadow: var(--tb-sh-card); color: var(--tb-ink); text-decoration: none; transition: transform 0.14s var(--tb-ease), border-color 0.2s, background 0.2s; }
+a.tb-order:hover { border-color: rgba(255, 255, 255, 0.22); transform: translateY(-1px); }
+a.tb-order:active { transform: scale(0.98); }
+a.tb-order:focus-visible { outline: 2px solid var(--tb-link); outline-offset: 2px; }
+.tb-order.is-live { border-color: rgba(251, 113, 133, 0.45); background: linear-gradient(180deg, rgba(251, 113, 133, 0.1), rgba(251, 113, 133, 0.03)); }
+.tb-order.is-skel { display: flex; flex-direction: column; gap: 0.55rem; pointer-events: none; }
+.tb-order-top { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
+.tb-order-merchant { font-weight: 800; font-size: 0.98rem; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tb-order-status { flex-shrink: 0; display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.66rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; padding: 0.3rem 0.7rem; border-radius: var(--tb-r-pill); border: 1px solid transparent; }
+.tb-order-status.is-ok { background: var(--tb-good-soft); color: #6ee7b7; border-color: rgba(52, 211, 153, 0.3); }
+.tb-order-status.is-muted { background: rgba(255, 255, 255, 0.05); color: var(--tb-muted); border-color: var(--tb-line); }
+.tb-order-status.is-live { background: rgba(251, 113, 133, 0.12); color: #fda4af; border-color: rgba(251, 113, 133, 0.4); }
+.tb-order-status.is-soft { background: transparent; color: var(--tb-muted); border-color: var(--tb-line); text-transform: none; letter-spacing: 0.01em; font-size: 0.72rem; }
+.tb-order-sub { display: flex; align-items: baseline; gap: 0.5rem; margin-top: 0.35rem; font-size: 0.78rem; color: var(--tb-muted); font-weight: 500; }
+.tb-order-sub time { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tb-order-code { font-weight: 800; color: var(--tb-ink); font-variant-numeric: tabular-nums; }
+.tb-order-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 0.35rem 0.7rem; margin-top: 0.55rem; font-size: 0.82rem; color: var(--tb-muted); font-weight: 600; }
+.tb-order-payout { font-weight: 800; color: var(--tb-ink); font-size: 0.95rem; font-variant-numeric: tabular-nums; }
+.tb-order-stars { color: #fcd34d; font-weight: 800; font-variant-numeric: tabular-nums; }
+.tb-loader { display: flex; justify-content: center; padding: 0.9rem 0 0.4rem; }
+.tb-loader-spin { width: 26px; height: 26px; border-radius: 50%; border: 3px solid var(--tb-line); border-top-color: #fff; animation: tb-spin 0.7s linear infinite; }
+.tb-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.tb-timeline-step { position: relative; display: flex; align-items: center; gap: 0.7rem; padding: 0.5rem 0 0.5rem 0.1rem; font-size: 0.88rem; font-weight: 600; color: var(--tb-faint); }
+.tb-timeline-step::before { content: ""; position: absolute; left: 0.62rem; top: 0; bottom: 0; width: 2px; background: var(--tb-line); }
+.tb-timeline-step:first-child::before { top: 50%; }
+.tb-timeline-step:last-child::before { bottom: 50%; }
+.tb-timeline-step:only-child::before { display: none; }
+.tb-timeline-dot { position: relative; z-index: 1; width: 1.1rem; height: 1.1rem; border-radius: 50%; border: 2px solid var(--tb-line); background: var(--tb-bg); flex-shrink: 0; }
+.tb-timeline-step.done { color: var(--tb-ink); }
+.tb-timeline-step.done .tb-timeline-dot { background: var(--tb-good); border-color: var(--tb-good); box-shadow: 0 0 12px rgba(52, 211, 153, 0.45); }
+.tb-timeline-step.now { color: var(--tb-ink); }
+.tb-timeline-step.now .tb-timeline-dot { border-color: #fff; background: #fff; animation: tb-breathe 1.8s ease-in-out infinite; box-shadow: 0 0 14px rgba(255, 255, 255, 0.5); }
+.tb-back { color: var(--tb-ink); font-weight: 700; text-decoration: none; }
+.tb-back:hover { text-decoration: underline; }
+@media (min-width: 720px) {
+  .tb-orders-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; align-items: start; }
+}
+/* ============ AI Run Planner (R3): picked card + plan legend ============ */
+.tb-card-picked { border-color: rgba(251, 191, 36, 0.55); box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.35), var(--tb-sh-card); }
+.tb-dot-amber, .tb-dot-white { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 0.4rem; vertical-align: baseline; }
+.tb-dot-amber { background: #fbbf24; box-shadow: 0 0 8px rgba(251, 191, 36, 0.7); }
+.tb-dot-white { background: #fff; box-shadow: 0 0 8px rgba(255, 255, 255, 0.6); }
+.tb-plan-fallback { list-style: none; margin: 0.6rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.82rem; }

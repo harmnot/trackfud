@@ -5,11 +5,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { wsTicket } from '../../lib/api';
 import { logger } from '../../lib/logger';
+import { orderKey } from '../orders/hooks';
 import {
   chooseNoCourier,
   fetchImpact,
   fetchThread,
-  getNoCourierChoice,
   getRating,
   listCheers,
   listMessages,
@@ -184,24 +184,23 @@ export function useSendCheer(args: { orderId: string }) {
   });
 }
 
-/** Latest no-courier choice for one order. */
-export function useNoCourier(args: { orderId: string }) {
-  return useQuery({
-    queryKey: ['nocourier', args.orderId],
-    queryFn: () => getNoCourierChoice({ orderId: args.orderId }),
-  });
-}
-
-/** Record wait/pickup/cancel through the real `delivery-choice` endpoint. */
+/** Send keep-waiting / pickup / cancel through the real `delivery-choice`
+ * endpoint. Success refetches the order (the server state hides the choices)
+ * plus history and wallet (a cancel refunds at once); an error refetches the
+ * order too, so a lost race (a courier was just found) shows the fresh state. */
 export function useChooseNoCourier(args: { orderId: string }) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (choice: NoCourierChoice) => chooseNoCourier({ orderId: args.orderId, choice }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['nocourier', args.orderId] });
-      void qc.invalidateQueries({ queryKey: ['order', args.orderId] });
+    onSuccess: async () => {
       void qc.invalidateQueries({ queryKey: ['orders'] });
-      void qc.invalidateQueries({ queryKey: ['outbox'] });
+      void qc.invalidateQueries({ queryKey: ['wallet'] });
+      // Stay pending until the fresh order is cached, so the outcome never
+      // renders against the stale `no_courier` state (no flash of choices).
+      await qc.invalidateQueries({ queryKey: orderKey(args.orderId) });
+    },
+    onError: () => {
+      void qc.invalidateQueries({ queryKey: orderKey(args.orderId) });
     },
   });
 }

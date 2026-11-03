@@ -9,11 +9,27 @@ import { logger } from './logger';
 export type IncomingMsg =
   | { type: 'hello'; user_id: string }
   | { type: 'pong' }
-  | { type: 'offer.created'; offer: unknown }
+  // Dispatch pings with the minimal frame (ids + expiry); the full offer
+  // (merchant, fee, fit) always comes from `GET /courier/offers`, which the
+  // handler refetches — frames stay small and the server stays the truth.
+  // Legacy `{ offer }` frames still parse for backwards compatibility.
+  // `offer.taken` clears a losing card at once: the atomic claim already
+  // decided the winner, this frame is the notice (one order, one courier).
+  | { type: 'offer.created'; offer?: unknown; offer_id?: string; delivery_id?: string; expires_at?: string; kind?: string }
+  | { type: 'offer.taken'; delivery_id?: string; order_id?: string }
   | { type: 'order.status'; order_id: string; status: string }
+  | { type: 'application.status'; status: string }
+  | { type: 'courier.status'; status: string }
+  // "Leave now" nudge, timed to food-ready (server is the trigger; the local
+  // timer in DeliveryPage is only the offline fallback).
+  | { type: 'delivery.leave_now'; delivery_id: string; order_id: string }
+  | { type: 'delivery.eta'; delivery_id: string; order_id: string; eta_s: number; route_warning: string }
+  // Kept for older servers that still emit the generic nudge shape.
   | { type: 'delivery.nudge'; delivery_id: string; text: string }
-  | { type: 'cheer'; from: string; text: string }
-  | { type: 'chat.message'; text: string; lang: string }
+  | { type: 'cheer'; order_id?: string; from?: string; text?: string; message?: string; lang?: string }
+  | { type: 'chat.message'; order_id?: string; message_id?: string; sender?: string; text?: string; body?: string; lang?: string }
+  // The translate job stored a line's translation (live = Muse Spark, false = offline dictionary).
+  | { type: 'chat.translated'; order_id: string; message_id: string; translated_body: string; lang: string; live: boolean }
   | { type: 'voice.transcript'; text: string; lang: string };
 
 export type OutgoingMsg = { type: 'loc.batch'; session_id: string; points: unknown[] } | { type: 'ping' };
@@ -29,6 +45,7 @@ export class CourierSocket {
   private failures = 0;
   private wanted = false;
   private pingTimer: number | null = null;
+  private connecting: Promise<void> | null = null;
 
   /** True while the underlying socket is open. */
   get connected(): boolean {
@@ -42,10 +59,23 @@ export class CourierSocket {
     };
   }
 
-  /** Open the socket (fetches a fresh single-use ticket first). */
-  async connect(): Promise<void> {
+  /**
+   * Open the socket (fetches a fresh single-use ticket first). Concurrent
+   * callers share one attempt: several screens connect on mount, and two
+   * sockets would make the server fan every frame (offers too) out twice.
+   */
+  connect(): Promise<void> {
     this.wanted = true;
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return Promise.resolve();
+    if (!this.connecting) {
+      this.connecting = this.open().finally(() => {
+        this.connecting = null;
+      });
+    }
+    return this.connecting;
+  }
+
+  private async open(): Promise<void> {
     let ticket: string;
     try {
       const res = await api<{ ticket: string }>('/ws/ticket', { method: 'POST' });
@@ -55,6 +85,8 @@ export class CourierSocket {
       this.scheduleReconnect();
       return;
     }
+    // disconnect() may have run while the ticket was in flight.
+    if (!this.wanted) return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const url = `${proto}://${location.host}/api/v1/ws?ticket=${encodeURIComponent(ticket)}`;
     const ws = new WebSocket(url);

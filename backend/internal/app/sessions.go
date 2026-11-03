@@ -184,11 +184,37 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if b.Kind == "qualification" {
+		// Under review the test locks: a new run must not knock a
+		// pending_review application back to testing, and the courier
+		// cannot submit again until the admin approves or rejects.
+		var appStatus string
+		_ = s.db.QueryRow(r.Context(), `SELECT status FROM courier_applications WHERE user_id=$1`, c.Sub).Scan(&appStatus)
+		if appStatus == "pending" || appStatus == "pending_review" {
+			problem(w, 409, "Conflict", "application under review; the fitness test unlocks after the review team approves or rejects it")
+			return
+		}
 		if msg, retry := s.qualGate(r.Context(), c.Sub); msg != "" {
 			if retry > 0 {
 				w.Header().Set("Retry-After", fmt.Sprint(retry))
 			}
 			problem(w, 429, "Too many attempts", msg)
+			return
+		}
+	}
+	if b.Kind == "work" {
+		// Frozen couriers cannot go online and banned couriers are off the
+		// platform (plan 8.4). Accounts without a couriers row — ordinary
+		// free tracking or pre-approval runners — are never blocked here.
+		var standing string
+		if err := s.db.QueryRow(r.Context(), `SELECT status FROM couriers WHERE user_id=$1`, c.Sub).Scan(&standing); err == nil && workSessionBlocked(standing) {
+			problem(w, 403, "Forbidden", "this courier account is "+standing+" and cannot go online; money already earned stays withdrawable")
+			return
+		}
+		// One active work session per courier (PLAN §3): going online twice
+		// resumes the live session instead of opening a second one, so the
+		// courier must End session in /run before /run-setup can start anew.
+		if row, serr := scanSession(s.db.QueryRow(r.Context(), `SELECT `+sessionCols+` FROM activity_sessions WHERE courier_id=$1 AND kind='work' AND status='active' ORDER BY started_at DESC LIMIT 1`, c.Sub)); serr == nil && row.ID != "" {
+			writeJSON(w, 200, map[string]any{"session": s.sessionView(row, time.Now()), "resumed": true})
 			return
 		}
 	}
@@ -232,9 +258,9 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	out := s.sessionView(row, time.Now())
 	if b.Kind == "qualification" {
 		out["rules"] = map[string]any{
-			"target_distance_m": s.qualTarget(mode), "moving_limit_s": s.qualLimit(mode),
-			"max_gap_s":         s.cfg.Qualification.MaxGapS,
-			"checkpoint_photos": s.cfg.Qualification.CheckpointPhotos,
+			"target_distance_m": s.qualTarget(r.Context(), mode), "moving_limit_s": s.qualLimit(r.Context(), mode),
+			"max_gap_s":         s.effQualInt(r.Context(), "qualification.max_gap_s", s.cfg.Qualification.MaxGapS),
+			"checkpoint_photos": s.effQualInt(r.Context(), "qualification.checkpoint_photos", s.cfg.Qualification.CheckpointPhotos),
 			"keep_screen_on":    true,
 		}
 	}
@@ -258,30 +284,34 @@ func scanDest(r *sessionRow) ([]any, func()) {
 	return dst, fin
 }
 
-func (s *Server) qualTarget(mode string) float64 {
+func (s *Server) qualTarget(ctx context.Context, mode string) float64 {
 	if mode == "biker" {
-		return s.cfg.Fitness.BikerDistanceM
+		return s.effectiveQualTarget(ctx, "biker", "")
 	}
-	return s.cfg.Fitness.RunnerDistanceM
+	return s.effectiveQualTarget(ctx, "runner", "")
 }
 
-func (s *Server) qualLimit(mode string) int {
+func (s *Server) qualLimit(ctx context.Context, mode string) int {
 	if mode == "biker" {
-		return s.cfg.Fitness.BikerMovingLimitS
+		return s.effectiveQualLimit(ctx, "biker", "")
 	}
-	return s.cfg.Fitness.RunnerMovingLimitS
+	return s.effectiveQualLimit(ctx, "runner", "")
 }
 
-// qualGate enforces the retry rule: 1 h between attempts, max 3 per 7 days.
+// qualGate enforces the retry rule: 1 h between attempts, max 3 per 7 days
+// (A9: both follow the CMS settings editor).
 func (s *Server) qualGate(ctx context.Context, userID string) (string, int) {
+	over := s.loadOverrides(ctx, []string{"global"})
+	maxPerWeek := effInt(over, "qualification.max_attempts_per_week", s.cfg.Qualification.MaxAttemptsPerWeek)
+	retryAfter := effInt(over, "qualification.retry_after_s", s.cfg.Qualification.RetryAfterS)
 	var last time.Time
 	var week int
 	_ = s.db.QueryRow(ctx, `SELECT COALESCE(max(created_at), now() - interval '2 hours'), count(*) FILTER (WHERE created_at > now() - interval '7 days')
 		FROM fitness_attempts WHERE user_id=$1`, userID).Scan(&last, &week)
-	if week >= s.cfg.Qualification.MaxAttemptsPerWeek {
-		return fmt.Sprintf("max %d attempts per 7 days; contact support for help", s.cfg.Qualification.MaxAttemptsPerWeek), 0
+	if week >= maxPerWeek {
+		return fmt.Sprintf("max %d attempts per 7 days; contact support for help", maxPerWeek), 0
 	}
-	if wait := time.Until(last.Add(time.Duration(s.cfg.Qualification.RetryAfterS) * time.Second)); wait > 0 {
+	if wait := time.Until(last.Add(time.Duration(retryAfter) * time.Second)); wait > 0 {
 		return fmt.Sprintf("rest a little: try again in %d minutes", int(wait.Minutes())+1), int(wait.Seconds())
 	}
 	return "", 0
@@ -331,7 +361,7 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 	v := s.sessionView(row, now)
 	v["checkpoint_due"] = due
 	if row.Kind == "qualification" && row.Status != "ended" {
-		target, limit := s.qualTarget(row.Mode), s.qualLimit(row.Mode)
+		target, limit := s.qualTarget(r.Context(), row.Mode), s.qualLimit(r.Context(), row.Mode)
 		left := target - row.DistM
 		if left < 0 {
 			left = 0
@@ -392,6 +422,13 @@ func (s *Server) ingestCore(ctx context.Context, userID, sessionID string, raw [
 	}
 	row, err := scanSession(s.db.QueryRow(ctx, `SELECT `+sessionCols+` FROM activity_sessions WHERE id=$1`, sessionID))
 	if err != nil {
+		// The phone mints session ids locally, so unknown ids are normally
+		// auto-created below. Frozen/banned couriers must not slip back
+		// online that way: the explicit startSession 403 backs this check.
+		var standing string
+		if qerr := s.db.QueryRow(ctx, `SELECT status FROM couriers WHERE user_id=$1`, userID).Scan(&standing); qerr == nil && workSessionBlocked(standing) {
+			return nil, 403, "this courier account is " + standing + " and cannot go online"
+		}
 		row, err = s.autoCreateSession(ctx, userID, sessionID)
 		if err != nil {
 			return nil, 400, "unknown session_id"
@@ -406,11 +443,9 @@ func (s *Server) ingestCore(ctx context.Context, userID, sessionID string, raw [
 	if ended, _ := s.autoEndIfIdle(ctx, row, now); ended {
 		return nil, 409, "session auto-ended after 10 min without GPS"
 	}
-	// Flip stale back to active on fresh data.
-	if row.Status == "stale" {
-		_, _ = s.db.Exec(ctx, `UPDATE activity_sessions SET status='active' WHERE id=$1`, row.ID)
-		row.Status = "active"
-	}
+	// `wasStale` (together with `!HasLast`) marks the invisibility→visible
+	// edge the late-online dispatch nudge below fires on.
+	wasStale := row.Status == "stale"
 	var lastTs time.Time
 	hasLast := false
 	if row.LastPointTs != nil {
@@ -423,10 +458,18 @@ func (s *Server) ingestCore(ctx context.Context, userID, sessionID string, raw [
 	maxSpeed, activeMin := s.modeSpeeds(row.Mode)
 	delta := AccumulateStats(row.LastLat, row.LastLng, lastTs, row.HasLast, kept,
 		maxSpeed, s.cfg.Tracking.MinMovingSpeedMps, activeMin, s.cfg.Tracking.SegmentMaxGapS)
+	// Only accepted fixes position the courier (BatchPosition): a batch whose
+	// fixes were all rejected bumps the skip counters and nothing else.
+	pos := BatchPosition(len(kept), delta, now)
 	if len(kept) > 0 {
 		if err := s.insertPoints(ctx, row.ID, kept, now); err != nil {
 			return nil, 500, err.Error()
 		}
+	}
+	// Flip stale back to active on fresh (accepted) data only.
+	if wasStale && pos.Moved() {
+		_, _ = s.db.Exec(ctx, `UPDATE activity_sessions SET status='active' WHERE id=$1`, row.ID)
+		row.Status = "active"
 	}
 	flags := append([]string{}, row.Flags...)
 	addFlag := func(f string) {
@@ -460,15 +503,28 @@ func (s *Server) ingestCore(ctx context.Context, userID, sessionID string, raw [
 	}
 	_, _ = s.db.Exec(ctx, `UPDATE activity_sessions SET distance_m=distance_m+$2, moving_s=moving_s+$3,
 		active_s=active_s+$4, steps=steps+$5, max_speed_mps=GREATEST(max_speed_mps,$6),
-		last_pos=ST_SetSRID(ST_MakePoint($7,$8),4326)::geography,
-		last_heading=COALESCE($9,last_heading), last_seen_at=$10, last_point_ts=$11,
+		last_pos=COALESCE(ST_SetSRID(ST_MakePoint($7,$8),4326)::geography, last_pos),
+		last_heading=COALESCE($9,last_heading), last_seen_at=COALESCE($10,last_seen_at),
+		last_point_ts=COALESCE($11,last_point_ts),
 		flags=$12, points_accepted=points_accepted+$13, points_skipped=points_skipped+$14
 		WHERE id=$1`, row.ID, delta.DistM, delta.MovingS, delta.ActiveS, delta.Steps,
-		delta.MaxSpeed, delta.LastLng, delta.LastLat, heading, now, delta.LastTs, string(flagB),
+		delta.MaxSpeed, pos.Lng, pos.Lat, heading, pos.SeenAt, pos.PointTs, string(flagB),
 		len(kept), fst.SkippedAccuracy+fst.SkippedStale)
+	// Late-online trigger: a courier who taps "Go online" after the
+	// accept-time (or food-ready) wave already ran would otherwise sit
+	// visible with a GPS lock but get no offers — the cascade only advances
+	// on offer expiry, retry, or a fresh ready tap, none of which fires for a
+	// courier who arrives late. The first positioned batch after invisibility
+	// (never positioned, or back from stale) re-runs nearby open searches;
+	// the nudge only enqueues deduped `dispatch_run` jobs, and runCascade
+	// stays the state-guarded decider.
+	if pos.Moved() && (!row.HasLast || wasStale) {
+		s.nudgeNearbySearches(ctx, delta.LastLat, delta.LastLng)
+	}
 	// Live delivery: share the dot (customer + merchant only) and replan on
-	// 150 m+ detours. No-ops when the courier carries nothing.
-	if delta.HasLast {
+	// 150 m+ detours, for a fresh accepted fix only (never re-announce an
+	// old position as current). No-ops when the courier carries nothing.
+	if pos.Moved() {
 		var hp *float64
 		if h, ok := heading.(float64); ok {
 			hp = &h
@@ -556,7 +612,7 @@ func (s *Server) maybePromptCheckpoint(ctx context.Context, row *sessionRow, now
 	}
 	var n int
 	_ = s.db.QueryRow(ctx, `SELECT count(*) FROM checkpoint_photos WHERE session_id=$1`, row.ID).Scan(&n)
-	if n >= s.cfg.Qualification.CheckpointPhotos && s.cfg.Qualification.CheckpointPhotos > 0 {
+	if n >= s.effQualInt(ctx, "qualification.checkpoint_photos", s.cfg.Qualification.CheckpointPhotos) && s.effQualInt(ctx, "qualification.checkpoint_photos", s.cfg.Qualification.CheckpointPhotos) > 0 {
 		return false
 	}
 	_, _ = s.db.Exec(ctx, `UPDATE activity_sessions SET checkpoint_prompt_at=$2 WHERE id=$1 AND checkpoint_prompt_at IS NULL`, row.ID, now)
@@ -641,9 +697,10 @@ func (s *Server) finalizeSession(ctx context.Context, sessionID, userID string, 
 	prows.Close()
 	maxSpeed, _ := s.modeSpeeds(row.Mode)
 	res := EvaluateTrack(tpts, FitnessRules{
-		TargetM: s.qualTarget(row.Mode), MovingLimitS: s.qualLimit(row.Mode),
-		ElapsedCapMult: s.cfg.Fitness.ElapsedCapMultiplier, MaxGapS: s.cfg.Qualification.MaxGapS,
-		MaxSpeedMps: maxSpeed, MinMovingMps: s.cfg.Tracking.MinMovingSpeedMps,
+		TargetM: s.qualTarget(ctx, row.Mode), MovingLimitS: s.qualLimit(ctx, row.Mode),
+		ElapsedCapMult: s.effQualInt(ctx, "fitness.elapsed_cap_multiplier", s.cfg.Fitness.ElapsedCapMultiplier),
+		MaxGapS:        s.effQualInt(ctx, "qualification.max_gap_s", s.cfg.Qualification.MaxGapS),
+		MaxSpeedMps:    maxSpeed, MinMovingMps: s.cfg.Tracking.MinMovingSpeedMps,
 		SegmentMaxGapS: s.cfg.Tracking.SegmentMaxGapS,
 	})
 	// Per-km splits (elapsed seconds at each km crossing).
@@ -716,7 +773,7 @@ func (s *Server) recordQualificationTx(ctx context.Context, tx pgx.Tx, userID st
 	_, _ = tx.Exec(ctx, `INSERT INTO fitness_attempts(user_id,session_id,mode,passed) VALUES($1,$2,$3,$4)`,
 		userID, row.ID, row.Mode, res.Passed)
 	flagB, _ := json.Marshal(res.Flags)
-	target, limit := s.qualTarget(row.Mode), s.qualLimit(row.Mode)
+	target, limit := s.qualTarget(ctx, row.Mode), s.qualLimit(ctx, row.Mode)
 	if res.Passed {
 		_, _ = tx.Exec(ctx, `UPDATE courier_applications SET fitness_distance_m=$2, fitness_moving_s=$3,
 			fitness_elapsed_s=$4, fitness_passed=true, fitness_flags=$5, fitness_gap_max_s=$6,
@@ -734,14 +791,14 @@ func (s *Server) recordQualificationTx(ctx context.Context, tx pgx.Tx, userID st
 	}
 	msg := ""
 	if !res.Passed {
-		msg = failMessage(row.Mode, res, target, limit, s.cfg.Qualification.MaxGapS)
+		msg = failMessage(row.Mode, res, target, limit, s.effQualInt(ctx, "qualification.max_gap_s", s.cfg.Qualification.MaxGapS))
 	}
 	return map[string]any{
 		"passed": res.Passed, "distance_m": res.DistanceM,
 		"moving_s": res.MovingS, "elapsed_s": res.ElapsedS, "max_gap_s": res.MaxGapS,
 		"flags": res.Flags, "fail_reasons": res.FailReasons, "message": msg,
 		"target_distance_m": target, "moving_limit_s": limit,
-		"retry_after_s": s.cfg.Qualification.RetryAfterS,
+		"retry_after_s": s.effQualInt(ctx, "qualification.retry_after_s", s.cfg.Qualification.RetryAfterS),
 	}
 }
 
@@ -845,7 +902,7 @@ func (s *Server) courierStats(w http.ResponseWriter, r *http.Request) {
 		"lifetime": map[string]any{"distance_m": dist, "moving_s": mov, "active_s": act,
 			"deliveries": deliveries, "sessions": sessCount},
 		"weekly": map[string]any{"active_s": weekActive,
-			"goal_s":   s.cfg.Health.WhoWeeklyActiveMin * 60,
-			"goal_met": weekActive >= int64(s.cfg.Health.WhoWeeklyActiveMin*60)},
+			"goal_s":   s.effectiveHealthGoal(r.Context(), "") * 60,
+			"goal_met": weekActive >= int64(s.effectiveHealthGoal(r.Context(), "")*60)},
 	})
 }

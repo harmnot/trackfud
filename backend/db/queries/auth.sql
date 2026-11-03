@@ -10,4 +10,4 @@ INSERT INTO refresh_tokens(user_id, app, token_hash, expires_at) VALUES ($1,$2,$
 -- name: ListRestaurants :many
 SELECT id, name, currency, timezone, address, prep_minutes, ST_Distance(location, ST_SetSRID(ST_MakePoint($1,$2),4326)::geography) AS dist FROM merchants WHERE status='approved' AND location IS NOT NULL ORDER BY dist ASC;
 -- name: ListMenu :many
-SELECT id, name, description, price_minor, size_class, spill_risk, travels_well, photo_url, available FROM menu_items WHERE merchant_id = $1;
+SELECT id, name, description, price_minor, size_class, travels_well, photo_url, available FROM menu_items WHERE merchant_id = $1;

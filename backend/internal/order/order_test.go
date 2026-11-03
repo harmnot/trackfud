@@ -12,6 +12,7 @@ func TestAllowedTransitions(t *testing.T) {
 		{StatusAccepted, StatusReady},
 		{StatusAccepted, StatusCancelled},
 		{StatusReady, StatusPickedUp},
+		{StatusReady, StatusCancelled},
 		{StatusPickedUp, StatusDelivered},
 		{StatusDelivered, StatusCompleted},
 	}

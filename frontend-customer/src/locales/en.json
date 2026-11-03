@@ -12,18 +12,26 @@
     "auth": {
         "login": "Log in",
         "signup": "Sign up",
-        "demo": "One-click demo login",
         "email": "Email",
         "password": "Password",
         "name": "Full name",
+        "namePh": "e.g. Budi Santoso",
         "logout": "Log out"
     },
     "home": {
         "title": "Food that moves with runners",
         "nearYou": "Sorted by distance from your delivery point",
         "runnersNearby": "Runners nearby",
+        "runnersBikersNearby": "Runners & bikers nearby",
         "staffOnly": "Staff delivery",
-        "setLocation": "Set delivery location"
+        "setLocation": "Set delivery location",
+        "all": "All",
+        "categories": "Categories",
+        "change": "Change",
+        "deliveringTo": "Delivering to {label}.",
+        "noLocationSet": "No delivery location set yet.",
+        "noMatch": "No restaurants match your search.",
+        "unrated": "New"
     },
     "menu": {
         "pickupOnly": "Pickup only",
@@ -31,18 +39,23 @@
         "add": "Add",
         "showOriginal": "Show original",
         "cartTotal": "Cart total",
-        "empty": "No dishes on the menu right now."
+        "empty": "No dishes on the menu right now.",
+        "all": "All",
+        "categories": "Menu categories"
     },
     "location": {
         "title": "Delivery location",
         "sub": "Save your spots, pin on the map, pick a default.",
         "useGps": "Use my location",
         "lat": "Latitude",
+        "latPh": "e.g. -6.2088",
         "lng": "Longitude",
+        "lngPh": "e.g. 106.8456",
         "label": "Label",
         "address": "Street address",
         "addressPh": "Street, building, area…",
         "note": "Delivery note (gate, floor…)",
+        "notePh": "e.g. Green gate, call on arrival",
         "save": "Save location",
         "saved": "Saved on server",
         "savedDevice": "Saved on this device (log in to sync to server).",
@@ -112,7 +125,9 @@
         "payNow": "Pay now",
         "back": "Back to cart",
         "estimateNote": "Estimate — the server confirms the exact total when you pay.",
-        "cardPending": "Card authorized in the sandbox. The order is placed once payment confirms — watch My orders."
+        "cardPending": "Card authorized in the sandbox. The order is placed once payment confirms — watch My orders.",
+        "checkStatus": "Check payment status",
+        "pinNote": "After you pay you'll get a 4-digit delivery PIN. Only tell it to your courier face to face at handover — never in chat."
     },
     "track": {
         "ordersTitle": "My orders",
@@ -131,11 +146,13 @@
         "d_placed": "The restaurant has about 3 minutes to accept.",
         "d_accepted": "The kitchen is cooking; a runner or biker is being found.",
         "d_ready": "The food is packed and waiting for pickup.",
-        "d_picked_up": "Your runner picked it up — follow the live map.",
+        "d_picked_up": "Your courier picked it up — follow the live map.",
         "d_delivered": "Enjoy your meal. Tell the courier your PIN to hand over.",
         "courierTitle": "Your courier",
-        "searching": "Finding your runner…",
+        "searching": "Finding your courier…",
         "searchingSub": "Dispatch offers your order to runners and bikers on route nearby.",
+        "courierNoneCancelled": "No courier was assigned — this order was cancelled.",
+        "courierNoneRejected": "No courier was assigned — the restaurant couldn't take this order.",
         "runner": "runner",
         "biker": "biker",
         "staff": "staff",
@@ -153,15 +170,28 @@
         "etaReady": "Ready around {time}",
         "etaSoon": "Timing updates when the restaurant accepts.",
         "home": "You",
-        "refundedNote": "You were fully refunded."
+        "liveMap": "Live delivery map: {status}",
+        "mapLoading": "Loading live map…",
+        "mapRetry": "Retry live map",
+        "schematicMap": "Schematic map — live tiles need a Maps key.",
+        "updatedAt": "Updated {time}",
+        "refundedNote": "You were fully refunded.",
+        "checkStatus": "Check payment status",
+        "couriers": "couriers",
+        "loadMore": "Load more",
+        "searchOrders": "Search orders",
+        "searchOrdersPh": "Search by order code…",
+        "showingOf": "Showing {shown} of {total} orders"
     },
     "topup": {
         "title": "Top up wallet",
         "amount": "Amount (minor units)",
+        "amountPh": "e.g. 50000",
         "go": "Top up with card (sandbox)",
         "pending": "Card authorized in the sandbox. The wallet credit lands when the Paddle webhook confirms.",
         "balance": "Balance",
-        "credited": "Top-up credited to your wallet."
+        "credited": "Top-up credited to your wallet.",
+        "fxNotice": "Paddle charges in {charge}, converted at the current rate — your wallet gets the full {credit}."
     },
     "pin": {
         "waiting": "Your PIN appears here once the restaurant accepts.",
@@ -169,7 +199,11 @@
         "reveal": "Show PIN",
         "hide": "Hide",
         "copy": "Copy",
-        "copied": "PIN copied."
+        "copied": "PIN copied.",
+        "done": "Handover complete — PIN accepted, enjoy your meal!",
+        "doneSub": "This code is no longer active. Rate your order below.",
+        "howItWorks": "Your courier asks for this 4-digit code at your door. Say it face to face to finish the handover.",
+        "neverChat": "Never type your PIN in chat — say it to your courier in person."
     },
     "rate": {
         "title_courier": "Rate your courier",
@@ -208,7 +242,11 @@
         "empty": "No delivered orders yet. Your powered kilometers will appear here.",
         "measuredNote": "Measured from the courier's GPS.",
         "recent": "Recent deliveries",
-        "couriers": "couriers"
+        "couriers": "couriers",
+        "quoteCaption": "From your latest delivery",
+        "quoteInvite": "Your first order will power someone's workout.",
+        "quoteLine": "You powered {distance} of {name}'s workout.",
+        "quoteLineAnon": "You powered {distance} of a courier's workout."
     },
     "chat": {
         "title": "Chat with courier",
@@ -227,7 +265,7 @@
     },
     "cheer": {
         "title": "Send a cheer",
-        "sub": "Your runner hears it read aloud in their earphones.",
+        "sub": "Your courier hears it read aloud in their earphones.",
         "c_muscle": "💪 You got this!",
         "c_party": "🎉 Amazing pace!",
         "c_go_run": "🏃 Keep flying!",
@@ -236,13 +274,20 @@
         "sent": "Cheers you sent"
     },
     "nocourier": {
-        "title": "Still finding your runner",
-        "sub": "No runner or biker could take this yet. The kitchen has not started — you choose.",
-        "wait": "Wait 5 more minutes",
-        "pickup": "Switch to pickup",
+        "title": "No courier free right now",
+        "sub": "No runner, biker, or restaurant staff could take your order. The kitchen keeps your food — choose what happens next.",
+        "wait": "Keep waiting for a courier",
+        "pickup": "Collect it myself",
         "cancel": "Cancel with full refund",
-        "ok_wait": "Waiting 5 more minutes. We will keep offering your order to runners nearby.",
-        "ok_pickup": "Pickup requested. The restaurant confirms and packs it for you."
+        "ok_wait": "Searching again — your order is offered to runners, bikers, and staff near the kitchen.",
+        "stillNone": "We searched again and nobody is free yet.",
+        "conflict": "Your order just changed — check the latest status above.",
+        "pickupTitle": "You're collecting this order",
+        "pickupCooking": "The kitchen is still cooking. Head over once it's packed — this page updates live.",
+        "pickupReady": "Your food is packed and waiting at the counter.",
+        "pickupCodeLabel": "Your order code",
+        "pickupShowCode": "Give this order code at the counter and the restaurant hands your food over.",
+        "pickupNoPin": "No courier is coming, so keep your delivery PIN to yourself — the restaurant never needs it."
     },
     "receipt": {
         "title": "Receipt",

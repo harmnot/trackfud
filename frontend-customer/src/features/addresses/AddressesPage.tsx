@@ -6,9 +6,10 @@ import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { ApiError, savedUser } from '../../lib/api';
-import { Button, Field, Item, List, Note, Page, Tag } from '../../components/ui';
+import { Button, Check, Field, Item, List, Note, Page, Radio, Tag, TextInput } from '../../components/ui';
 import { createAddress, deleteAddress, listAddresses, setDefaultAddress, updateAddress } from './api';
-import { getActiveId, getActiveLoc, setActiveLoc } from './active';
+import { getActiveId, getActiveLoc } from './active';
+import { setActiveDelivery, setDeviceDelivery } from './useDeliveryLocation';
 import { GoogleMapPicker } from './GoogleMapPicker';
 import type { CustomerAddress } from './types';
 
@@ -47,13 +48,13 @@ export function AddressesPage() {
   useEffect(() => {
     if (user && saved.data && saved.data.length > 0 && !getActiveId()) {
       const def = saved.data.find((a) => a.is_default) ?? saved.data[0]!;
-      setActiveLoc({ lat: def.lat, lng: def.lng, note: def.note || undefined }, def.id);
+      setActiveDelivery(def);
       setActiveIdState(def.id);
     }
   }, [user, saved.data]);
 
   function chooseActive(a: CustomerAddress) {
-    setActiveLoc({ lat: a.lat, lng: a.lng, note: a.note || undefined }, a.id);
+    setActiveDelivery(a);
     setActiveIdState(a.id);
     setMsg(t('location.activeSet', { label: a.label }));
   }
@@ -92,7 +93,7 @@ export function AddressesPage() {
       return;
     }
     if (!user) {
-      setActiveLoc({ lat, lng, note: form.note || undefined }, null);
+      setDeviceDelivery({ lat, lng, note: form.note || undefined });
       setActiveIdState(null);
       setEditingId(null);
       setMsg(t('location.savedDevice'));
@@ -112,7 +113,7 @@ export function AddressesPage() {
         editingId === 'new' || editingId === null
           ? await createAddress(input)
           : await updateAddress({ id: editingId, ...input });
-      setActiveLoc({ lat: done.lat, lng: done.lng, note: done.note || undefined }, done.id);
+      setActiveDelivery(done);
       setActiveIdState(done.id);
       setEditingId(null);
       setMsg(t('location.saved'));
@@ -134,11 +135,11 @@ export function AddressesPage() {
         if (promotedId) {
           const next = (saved.data ?? []).find((a) => a.id === promotedId);
           if (next) {
-            setActiveLoc({ lat: next.lat, lng: next.lng, note: next.note || undefined }, next.id);
+            setActiveDelivery(next);
             setActiveIdState(next.id);
           }
         } else {
-          setActiveLoc({ lat: DEFAULT_CENTER.lat, lng: DEFAULT_CENTER.lng }, null);
+          setDeviceDelivery({ lat: DEFAULT_CENTER.lat, lng: DEFAULT_CENTER.lng });
           setActiveIdState(null);
         }
       }
@@ -158,7 +159,7 @@ export function AddressesPage() {
       await setDefaultAddress(id);
       const next = (saved.data ?? []).find((a) => a.id === id);
       if (next) {
-        setActiveLoc({ lat: next.lat, lng: next.lng, note: next.note || undefined }, next.id);
+        setActiveDelivery(next);
         setActiveIdState(next.id);
       }
       setMsg(t('location.defaultSet'));
@@ -197,10 +198,10 @@ export function AddressesPage() {
             {list.map((a, i) => (
               <Item key={a.id} index={i}>
                 <div className={`tb-addr${activeId === a.id ? ' on' : ''}`}>
-                  <input
-                    type="radio"
+                  <Radio
                     name="active-address"
-                    aria-label={t('location.useAsDelivery', { label: a.label })}
+                    value={a.id}
+                    ariaLabel={t('location.useAsDelivery', { label: a.label })}
                     checked={activeId === a.id}
                     onChange={() => chooseActive(a)}
                   />
@@ -250,60 +251,55 @@ export function AddressesPage() {
           <GoogleMapPicker lat={mapCenter.lat} lng={mapCenter.lng} onPick={pick} />
           <div className="grid grid-cols-2 gap-3">
             <Field label={t('location.lat')}>
-              <input
-                className="tb-input"
+              <TextInput
                 inputMode="decimal"
                 value={form.lat}
-                onChange={(e) => setForm({ ...form, lat: e.target.value })}
+                placeholder={t('location.latPh', { defaultValue: 'e.g. -6.2088' })}
+                onChange={(v) => setForm({ ...form, lat: v })}
               />
             </Field>
             <Field label={t('location.lng')}>
-              <input
-                className="tb-input"
+              <TextInput
                 inputMode="decimal"
                 value={form.lng}
-                onChange={(e) => setForm({ ...form, lng: e.target.value })}
+                placeholder={t('location.lngPh', { defaultValue: 'e.g. 106.8456' })}
+                onChange={(v) => setForm({ ...form, lng: v })}
               />
             </Field>
           </div>
           {user && (
             <Field label={t('location.label')}>
-              <input
-                className="tb-input"
+              <TextInput
                 value={form.label}
                 maxLength={60}
                 placeholder="Home"
-                onChange={(e) => setForm({ ...form, label: e.target.value })}
+                onChange={(v) => setForm({ ...form, label: v })}
               />
             </Field>
           )}
           {user && (
             <Field label={t('location.address')}>
-              <input
-                className="tb-input"
+              <TextInput
                 value={form.address}
                 maxLength={500}
                 placeholder={t('location.addressPh')}
-                onChange={(e) => setForm({ ...form, address: e.target.value })}
+                onChange={(v) => setForm({ ...form, address: v })}
               />
             </Field>
           )}
           <Field label={t('location.note')}>
-            <input
-              className="tb-input"
+            <TextInput
               value={form.note}
-              onChange={(e) => setForm({ ...form, note: e.target.value })}
+              placeholder={t('location.notePh', { defaultValue: 'e.g. Green gate, call on arrival' })}
+              onChange={(v) => setForm({ ...form, note: v })}
             />
           </Field>
           {user && (
-            <label className="text-sm flex gap-2 items-center font-semibold">
-              <input
-                type="checkbox"
-                checked={form.isDefault}
-                onChange={(e) => setForm({ ...form, isDefault: e.target.checked })}
-              />{' '}
-              {t('location.makeDefault')}
-            </label>
+            <Check
+              checked={form.isDefault}
+              onChange={(v) => setForm({ ...form, isDefault: v })}
+              label={t('location.makeDefault')}
+            />
           )}
           <div className="flex flex-col gap-2">
             <Button variant="ember" block disabled={busy} onClick={() => void save()}>

@@ -42,8 +42,6 @@ dispatch:
     biker_max_trip_m: 7000
     runner_sizes: [S, M]
     biker_sizes: [S, M, L]
-    runner_spill: [low]
-    biker_spill: [low, medium]
     runner_plan_kmh: 9
     biker_plan_kmh: 16
     circuity: 1.3
@@ -74,8 +72,10 @@ payments:
     sandbox_only: true
 # AI model serving (B6): Modal-hosted chat/text by default.
 # Credentials are env-only (TF_MODAL_KEY / TF_MODAL_SECRET) and never go here.
-# spark_model MUST equal the model id served on the Modal endpoint — confirm with:
-#   curl -s $TF_META_BASE_URL/v1/models -H "Modal-Key: $TF_MODAL_KEY" -H "Modal-Secret: $TF_MODAL_SECRET"
+# base_url is the full OpenAI-compatible base INCLUDING /v1 (the SDK appends
+# /chat/completions). spark_model MUST equal the model id served on the Modal
+# endpoint — confirm with:
+#   curl -s "$TF_META_BASE_URL/models" -H "Authorization: Bearer $TF_MODAL_KEY.$TF_MODAL_SECRET"
 ai:
-    base_url: "https://muhammad099x-work--ep-muse-spark-open-816b-a42b-server.us-west.modal.direct"
-    spark_model: "muse-spark-open"
+    base_url: "https://muhammad099x-work--ep-muse-spark-open-816b-a42b-server.us-west.modal.direct/v1"
+    spark_model: "meta-models/Muse-Spark-Open-816B-A42B"

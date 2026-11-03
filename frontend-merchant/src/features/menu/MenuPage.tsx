@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { ApiError } from '../../lib/api';
 import { logger } from '../../lib/logger';
-import { Badge, Button, Field, Item, List, Note, Page, Switch } from '../../components/ui';
+import { Badge, Button, Field, FileUpload, Item, List, Note, Page, Select, Switch, TextInput } from '../../components/ui';
 import {
   createCategory,
   createItem,
@@ -26,7 +26,6 @@ import {
   BUSY_EXTRA_MIN,
   MAX_PREP_MIN,
   SIZE_OPTIONS,
-  SPILL_OPTIONS,
   SUPPORTED_LANGS,
   formatMinor,
   minorToMajorText,
@@ -37,7 +36,6 @@ import {
   type LocaleMap,
   type MenuItem,
   type SizeClass,
-  type SpillRisk,
 } from './types';
 
 /**
@@ -62,7 +60,6 @@ interface EditorState {
   description: LocaleMap;
   priceText: string;
   size_class: SizeClass;
-  spill_risk: SpillRisk;
   travels_well: boolean;
   photo_url: string;
   available: boolean;
@@ -76,7 +73,6 @@ function editorFromItem(item: MenuItem): EditorState {
     description: { ...blankLocales(), ...item.description },
     priceText: '',
     size_class: item.size_class,
-    spill_risk: item.spill_risk,
     travels_well: item.travels_well,
     photo_url: item.photo_url,
     available: item.available,
@@ -91,7 +87,6 @@ function blankEditor(): EditorState {
     description: blankLocales(),
     priceText: '',
     size_class: 'M',
-    spill_risk: 'low',
     travels_well: true,
     photo_url: '',
     available: true,
@@ -115,6 +110,7 @@ export default function MenuPage(): React.ReactNode {
   const [busy, setBusy] = useState(false);
   const [paused, setPaused] = useState(readFlag(PAUSE_KEY));
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoName, setPhotoName] = useState<string | null>(null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
 
@@ -145,6 +141,7 @@ export default function MenuPage(): React.ReactNode {
     setEditingId('new');
     setEditor({ ...blankEditor(), category_id: filter || null });
     setPriceSeeded(false);
+    setPhotoName(null);
     setErr('');
   }
 
@@ -152,6 +149,7 @@ export default function MenuPage(): React.ReactNode {
     setEditingId(item.id);
     setEditor({ ...editorFromItem(item), priceText: minorToMajorText({ minor: item.price_minor, currency }) });
     setPriceSeeded(true);
+    setPhotoName(null);
     setErr('');
   }
 
@@ -173,7 +171,6 @@ export default function MenuPage(): React.ReactNode {
       description: editor.description,
       price_minor: minor,
       size_class: editor.size_class,
-      spill_risk: editor.spill_risk,
       travels_well: editor.travels_well,
       photo_url: editor.photo_url,
       available: editor.available,
@@ -218,6 +215,7 @@ export default function MenuPage(): React.ReactNode {
   async function attachPhoto(file: File): Promise<void> {
     setPhotoBusy(true);
     setErr('');
+    setPhotoName(file.name);
     try {
       const shrunk = await shrinkPhoto({ file });
       const url = await uploadPhoto({ blob: shrunk.blob, contentType: shrunk.contentType });
@@ -270,7 +268,9 @@ export default function MenuPage(): React.ReactNode {
       <section className="mt-4" aria-label={t('menu.cats')}>
         <h2 className="tb-h2">{t('menu.cats')}</h2>
         <span className="flex gap-2 mt-2">
-          <input className="tb-input" value={catName} onChange={(e) => setCatName(e.target.value)} placeholder={t('menu.catName')} aria-label={t('menu.catName')} />
+          <span className="flex-1">
+            <TextInput value={catName} onChange={setCatName} placeholder={t('menu.catName')} aria-label={t('menu.catName')} />
+          </span>
           <Button variant="soft" onClick={() => void addCategory()}>{t('menu.add')}</Button>
         </span>
         <List className="flex flex-col gap-2 mt-2">
@@ -310,12 +310,15 @@ export default function MenuPage(): React.ReactNode {
           <Badge green={(items.data?.length ?? 0) > 0}>{t('menu.count', { n: items.data?.length ?? 0 })}</Badge>
         </span>
         <span className="flex gap-2 mt-4">
-          <select className="tb-input" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label={t('menu.filterCat')}>
-            <option value="">{t('menu.allCats')}</option>
-            {(cats.data ?? []).map((c) => (
-              <option key={c.id} value={c.id}>{pickLocale({ map: c.name, lang })}</option>
-            ))}
-          </select>
+          <Select
+            value={filter}
+            ariaLabel={t('menu.filterCat')}
+            onChange={setFilter}
+            options={[
+              { value: '', label: t('menu.allCats') },
+              ...(cats.data ?? []).map((c) => ({ value: c.id, label: pickLocale({ map: c.name, lang }) })),
+            ]}
+          />
           <Button onClick={openNew}>{t('menu.new')}</Button>
         </span>
 
@@ -323,89 +326,92 @@ export default function MenuPage(): React.ReactNode {
           <article className="tb-card mt-3 flex flex-col gap-3" aria-label={t('menu.editor')}>
             {SUPPORTED_LANGS.map((l) => (
               <Field key={l} label={`${t('menu.name')} (${l})`}>
-                <input
-                  className="tb-input"
+                <TextInput
                   value={editor.name[l] ?? ''}
-                  onChange={(e) => setEditor({ ...editor, name: { ...editor.name, [l]: e.target.value } })}
+                  onChange={(v) => setEditor({ ...editor, name: { ...editor.name, [l]: v } })}
+                  placeholder={t('menu.namePh', { defaultValue: 'e.g. Nasi Goreng' })}
                 />
               </Field>
             ))}
             {SUPPORTED_LANGS.map((l) => (
               <Field key={l} label={`${t('menu.desc')} (${l})`}>
-                <input
-                  className="tb-input"
+                <TextInput
                   value={editor.description[l] ?? ''}
-                  onChange={(e) => setEditor({ ...editor, description: { ...editor.description, [l]: e.target.value } })}
+                  onChange={(v) => setEditor({ ...editor, description: { ...editor.description, [l]: v } })}
+                  placeholder={t('menu.descPh', { defaultValue: 'e.g. Fried rice with egg' })}
                 />
               </Field>
             ))}
             <span className="grid grid-cols-2 gap-2">
               <Field label={`${t('menu.price')} (${currency})`}>
-                <input className="tb-input" inputMode="decimal" value={editor.priceText} onChange={(e) => setEditor({ ...editor, priceText: e.target.value })} placeholder="35000" />
+                <TextInput inputMode="decimal" value={editor.priceText} onChange={(v) => setEditor({ ...editor, priceText: v })} placeholder="35000" />
               </Field>
               <Field label={t('menu.cat')}>
-                <select className="tb-input" value={editor.category_id ?? ''} onChange={(e) => setEditor({ ...editor, category_id: e.target.value || null })}>
-                  <option value="">{t('menu.noCat')}</option>
-                  {(cats.data ?? []).map((c) => (
-                    <option key={c.id} value={c.id}>{pickLocale({ map: c.name, lang })}</option>
-                  ))}
-                </select>
+                <Select
+                  value={editor.category_id ?? ''}
+                  ariaLabel={t('menu.cat')}
+                  onChange={(v) => setEditor({ ...editor, category_id: v || null })}
+                  options={[
+                    { value: '', label: t('menu.noCat') },
+                    ...(cats.data ?? []).map((c) => ({ value: c.id, label: pickLocale({ map: c.name, lang }) })),
+                  ]}
+                />
               </Field>
             </span>
-            <span className="grid grid-cols-2 gap-2">
+            <span>
               <Field label={t('menu.size')}>
-                <select className="tb-input" value={editor.size_class} onChange={(e) => setEditor({ ...editor, size_class: e.target.value as SizeClass })}>
-                  {SIZE_OPTIONS.map((s) => (<option key={s} value={s}>{s}</option>))}
-                </select>
-              </Field>
-              <Field label={t('menu.spill')}>
-                <select className="tb-input" value={editor.spill_risk} onChange={(e) => setEditor({ ...editor, spill_risk: e.target.value as SpillRisk })}>
-                  {SPILL_OPTIONS.map((s) => (<option key={s} value={s}>{t(`menu.spill_${s}`)}</option>))}
-                </select>
+                <Select
+                  value={editor.size_class}
+                  ariaLabel={t('menu.size')}
+                  onChange={(v) => setEditor({ ...editor, size_class: v as SizeClass })}
+                  options={SIZE_OPTIONS.map((s) => ({ value: s, label: s }))}
+                />
               </Field>
             </span>
             <Switch checked={editor.travels_well} onChange={(v) => setEditor({ ...editor, travels_well: v })} label={t('menu.travels')} />
             <Switch checked={editor.available} onChange={(v) => setEditor({ ...editor, available: v })} label={t('menu.available')} />
-            <Field label={t('menu.photo')}>
-              <input
-                className="tb-input"
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) void attachPhoto(f);
-                }}
-              />
-            </Field>
+            <p className="tb-label">{t('menu.photo')}</p>
+            <FileUpload
+              title={t('menu.photoDrop')}
+              hint={t('menu.photoHint')}
+              accept="image/jpeg,image/png,image/webp"
+              fileName={photoName ?? (editor.photo_url ? 'dish-photo.jpg' : null)}
+              busy={photoBusy}
+              done={Boolean(editor.photo_url) && !photoBusy}
+              onFile={(f) => void attachPhoto(f)}
+              onClear={() => { setEditor({ ...editor, photo_url: '' }); setPhotoName(null); }}
+            />
             {photoBusy && <Note tone="info">{t('menu.photoUp')}</Note>}
             {editor.photo_url && <img src={editor.photo_url} alt="" className="tb-thumb" />}
             <div className="tb-card">
               <p className="font-extrabold text-sm mb-2">{t('menu.options')}</p>
               {editor.extras.options.map((o) => (
                 <span key={o.id} className="flex gap-2 mb-2">
-                  <input
-                    className="tb-input"
-                    value={o.name.en ?? ''}
-                    placeholder={t('menu.optName')}
-                    onChange={(e) => setEditor({
-                      ...editor,
-                      extras: { ...editor.extras, options: editor.extras.options.map((x) => (x.id === o.id ? { ...x, name: { ...x.name, en: e.target.value } } : x)) },
-                    })}
-                  />
-                  <input
-                    className="tb-input"
-                    inputMode="numeric"
-                    style={{ maxWidth: '7rem' }}
-                    value={String(o.delta_minor)}
-                    aria-label={t('menu.optDelta')}
-                    onChange={(e) => {
-                      const n = parseInt(e.target.value, 10);
-                      setEditor({
+                  <span className="flex-1">
+                    <TextInput
+                      value={o.name.en ?? ''}
+                      placeholder={t('menu.optName')}
+                      onChange={(v) => setEditor({
                         ...editor,
-                        extras: { ...editor.extras, options: editor.extras.options.map((x) => (x.id === o.id ? { ...x, delta_minor: Number.isSafeInteger(n) && n >= 0 ? n : 0 } : x)) },
-                      });
-                    }}
-                  />
+                        extras: { ...editor.extras, options: editor.extras.options.map((x) => (x.id === o.id ? { ...x, name: { ...x.name, en: v } } : x)) },
+                      })}
+                    />
+                  </span>
+                  <span style={{ maxWidth: '7rem' }}>
+                    <TextInput
+                      inputMode="numeric"
+                      value={String(o.delta_minor)}
+                      aria-label={t('menu.optDelta')}
+                      placeholder={t('menu.optDeltaPh', { defaultValue: 'e.g. 5000' })}
+                      onChange={(v) => {
+                        const n = parseInt(v, 10);
+                        setEditor({
+                          ...editor,
+                          extras: { ...editor.extras, options: editor.extras.options.map((x) => (x.id === o.id ? { ...x, delta_minor: Number.isSafeInteger(n) && n >= 0 ? n : 0 } : x)) },
+                        });
+                      }}
+                    />
+                  </span>
                   <Button
                     variant="danger"
                     onClick={() => setEditor({ ...editor, extras: { ...editor.extras, options: editor.extras.options.filter((x) => x.id !== o.id) } })}
@@ -453,7 +459,7 @@ export default function MenuPage(): React.ReactNode {
                 <span className="tb-person-main">
                   <span className="tb-person-name block">{pickLocale({ map: item.name, lang }) || t('menu.unnamed')}</span>
                   <span className="tb-person-sub">
-                    {formatMinor({ minor: item.price_minor, currency, lang })} · {item.size_class} · {t(`menu.spill_${item.spill_risk}`)}
+                    {formatMinor({ minor: item.price_minor, currency, lang })} · {item.size_class}
                   </span>
                   <span className="flex gap-1 mt-1 flex-wrap">
                     {!item.travels_well && <Badge>{t('menu.pickupOnly')}</Badge>}

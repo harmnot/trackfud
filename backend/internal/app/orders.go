@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -184,7 +185,7 @@ type orderRow struct {
 	ID, Code, CustomerID, MerchantID, Status, Currency string
 	Subtotal, Delivery, Service, Tip, Total            int64
 	Commission, CourierFee                             int64
-	Size, Spill, PayMethod, PayStatus                  string
+	Size, PayMethod, PayStatus                         string
 	Lat, Lng                                           float64
 	HasDropoff                                         bool
 	DropoffNote, PickupCode, DropoffPin                string
@@ -200,7 +201,7 @@ func scanOrderRow(r pgx.Row) (orderRow, error) {
 	var ready, ws, we *time.Time
 	err := r.Scan(&o.ID, &o.Code, &o.CustomerID, &o.MerchantID, &o.Status, &o.Currency,
 		&o.Subtotal, &o.Delivery, &o.Service, &o.Tip, &o.Total, &o.Commission, &o.CourierFee,
-		&o.Size, &o.Spill, &o.PayMethod, &o.PayStatus, &lat, &lng, &o.HasDropoff,
+		&o.Size, &o.PayMethod, &o.PayStatus, &lat, &lng, &o.HasDropoff,
 		&o.DropoffNote, &o.PickupCode, &o.DropoffPin, &o.PrepMinutes,
 		&ready, &ws, &we, &o.CancelReason, &o.CreatedAt)
 	if err != nil {
@@ -213,7 +214,7 @@ func scanOrderRow(r pgx.Row) (orderRow, error) {
 
 const orderCols = `id, code, customer_id, merchant_id, status, currency,
 	subtotal_minor, delivery_fee_minor, service_fee_minor, tip_minor, total_minor,
-	commission_minor, courier_fee_minor, size_class, spill_risk, payment_method, payment_status,
+	commission_minor, courier_fee_minor, size_class, payment_method, payment_status,
 	COALESCE(ST_Y(dropoff::geometry), 0), COALESCE(ST_X(dropoff::geometry), 0), dropoff IS NOT NULL,
 	dropoff_note, pickup_code, dropoff_pin, prep_minutes,
 	ready_at_est, window_start, window_end, cancel_reason, created_at`
@@ -250,11 +251,11 @@ func (s *Server) orderView(ctx context.Context, o orderRow, role string) map[str
 	v := map[string]any{
 		"id": o.ID, "code": o.Code, "status": o.Status, "merchant_id": o.MerchantID,
 		"merchant_name": merchantName,
-		"currency": o.Currency,
-		"subtotal": money(o.Subtotal, o.Currency), "delivery_fee": money(o.Delivery, o.Currency),
+		"currency":      o.Currency,
+		"subtotal":      money(o.Subtotal, o.Currency), "delivery_fee": money(o.Delivery, o.Currency),
 		"service_fee": money(o.Service, o.Currency), "tip": money(o.Tip, o.Currency),
 		"total": money(o.Total, o.Currency), "commission": money(o.Commission, o.Currency),
-		"size_class": o.Size, "spill_risk": o.Spill,
+		"size_class":     o.Size,
 		"payment_method": o.PaymentMethod(), "payment_status": o.PayStatus,
 		"ready_at_est": iso(o.ReadyAtEst), "window_start": iso(o.WindowStart), "window_end": iso(o.WindowEnd),
 		"cancel_reason": o.CancelReason, "created_at": o.CreatedAt.UTC().Format(time.RFC3339),
@@ -268,6 +269,43 @@ func (s *Server) orderView(ctx context.Context, o orderRow, role string) map[str
 		v["delivery_pin"] = o.DropoffPin
 	}
 	return v
+}
+
+// merchantDeliveryLine is the light live-dispatch view attached to every
+// merchant order-list row (PLAN.md §9: "Merchant: courier approaching +
+// ETA"). Same `status`/`eta_s` shape as the full `Order.delivery` view, so
+// the merchant PWA reads list rows and detail with one parser. A nil ETA
+// renders as JSON null with the key present: "searching" stays
+// distinguishable from "no dispatch data". Once a courier accepts, the line
+// also carries their public first name + mode so the kitchen sees WHO
+// accepted without a second fetch; both stay absent (null) before assignment.
+func merchantDeliveryLine(status string, etaS *int, courierName *string, courierMode *string) map[string]any {
+	var eta any
+	if etaS != nil {
+		eta = *etaS
+	}
+	var name any
+	if courierName != nil {
+		name = *courierName
+	}
+	var mode any
+	if courierMode != nil {
+		mode = *courierMode
+	}
+	return map[string]any{"status": status, "eta_s": eta, "courier_name": name, "courier_mode": mode}
+}
+
+// buildOrderDetail assembles one order-detail envelope from the role-shaped
+// base view plus items, events and the live delivery view. Both the customer
+// detail route and the merchant detail route build through here, so the two
+// tracks always serve the same keys.
+func buildOrderDetail(base map[string]any, items, events any, delivery map[string]any) map[string]any {
+	base["items"] = items
+	base["events"] = events
+	if delivery != nil {
+		base["delivery"] = delivery
+	}
+	return base
 }
 
 // PaymentMethod returns the wire value for the payment method column.
@@ -353,12 +391,12 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 		b.Items = append(b.Items, createOrderItem{MenuItemID: id, Qty: merged[id]})
 	}
 	// Merchant must be orderable.
-	var mCur, mStatus string
+	var mCur, mStatus, mCountry string
 	var mLat, mLng *float64
 	var mPrep int
-	err := s.db.QueryRow(r.Context(), `SELECT currency, status,
+	err := s.db.QueryRow(r.Context(), `SELECT currency, status, country,
 		ST_Y(location::geometry), ST_X(location::geometry), prep_minutes
-		FROM merchants WHERE id=$1`, b.MerchantID).Scan(&mCur, &mStatus, &mLat, &mLng, &mPrep)
+		FROM merchants WHERE id=$1`, b.MerchantID).Scan(&mCur, &mStatus, &mCountry, &mLat, &mLng, &mPrep)
 	if err != nil || mStatus != "approved" || mLat == nil {
 		problem(w, 400, "Validation failed", "restaurant is not available for delivery")
 		return
@@ -396,14 +434,12 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 		name  []byte
 		price int64
 		size  string
-		spill string
 		qty   int
 	}
 	var items []picked
 	var subtotal int64
-	worstSize, worstSpill := 0, 0
+	worstSize := 0
 	sizeRank := map[string]int{"S": 0, "M": 1, "L": 2}
-	spillRank := map[string]int{"low": 0, "medium": 1, "high": 2}
 	for _, it := range b.Items {
 		if it.Qty < 1 || it.Qty > 20 {
 			problem(w, 400, "Validation failed", "item qty must be 1-20")
@@ -411,9 +447,9 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 		}
 		var p picked
 		var avail, tw bool
-		err := s.db.QueryRow(r.Context(), `SELECT id, name, price_minor, size_class, spill_risk, available, travels_well
+		err := s.db.QueryRow(r.Context(), `SELECT id, name, price_minor, size_class, available, travels_well
 			FROM menu_items WHERE id=$1 AND merchant_id=$2`, it.MenuItemID, b.MerchantID).Scan(
-			&p.id, &p.name, &p.price, &p.size, &p.spill, &avail, &tw)
+			&p.id, &p.name, &p.price, &p.size, &avail, &tw)
 		if err != nil {
 			problem(w, 400, "Validation failed", "menu item not found at this restaurant")
 			return
@@ -432,12 +468,8 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 		if sizeRank[p.size] > worstSize {
 			worstSize = sizeRank[p.size]
 		}
-		if spillRank[p.spill] > worstSpill {
-			worstSpill = spillRank[p.spill]
-		}
 	}
 	sizes := []string{"S", "M", "L"}
-	spills := []string{"low", "medium", "high"}
 	// Server-quoted distance and fees (never trust client math).
 	var distM float64
 	err = s.db.QueryRow(r.Context(), `SELECT ST_Distance(
@@ -447,7 +479,11 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "Server error", err.Error())
 		return
 	}
-	q := order.QuoteFor(order.QuoteInput{SubtotalMinor: subtotal, DistanceKm: distM / 1000, Currency: mCur, TipMinor: b.TipMinor})
+	commBps, staffBps, svcBps := s.effectiveFees(r.Context(), mCountry)
+	q := order.QuoteForRates(order.QuoteInput{SubtotalMinor: subtotal, DistanceKm: distM / 1000, Currency: mCur, TipMinor: b.TipMinor},
+		commBps, staffBps, svcBps)
+	// A9: merchant accept timeout follows the CMS settings editor.
+	acceptWin, _, _ := s.effectiveOrderWindows(r.Context(), mCountry)
 	payMethod := strings.ToLower(strings.TrimSpace(b.PaymentMethod))
 	if payMethod == "" {
 		payMethod = "wallet"
@@ -500,13 +536,13 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 	var orderID string
 	err = tx.QueryRow(ctx, `INSERT INTO orders(code,customer_id,merchant_id,status,currency,
 		subtotal_minor,delivery_fee_minor,service_fee_minor,tip_minor,total_minor,
-		commission_minor,courier_fee_minor,size_class,spill_risk,payment_method,payment_status,
+		commission_minor,courier_fee_minor,size_class,payment_method,payment_status,
 		dropoff,dropoff_note,dropoff_pin,prep_minutes,placed_at,idempotency_key)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
-		ST_SetSRID(ST_MakePoint($17,$18),4326)::geography,$19,$20,$21,$22,$23) RETURNING id`,
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+		ST_SetSRID(ST_MakePoint($16,$17),4326)::geography,$18,$19,$20,$21,$22) RETURNING id`,
 		code, c.Sub, b.MerchantID, initStatus, mCur, q.SubtotalMinor, q.DeliveryMinor, q.ServiceMinor,
 		q.TipMinor, q.TotalMinor, q.CommissionMinor, q.CourierFeeMinor,
-		sizes[worstSize], spills[worstSpill], payMethod, payStatus,
+		sizes[worstSize], payMethod, payStatus,
 		lng, lat, note, pin, mPrep, placedAt, sqlNullIfEmpty(idemKey)).Scan(&orderID)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
@@ -547,9 +583,8 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 			problem(w, 500, "Server error", err.Error())
 			return
 		}
-		runAt := time.Now().Add(time.Duration(s.cfg.Order.MerchantAcceptWindowS) * time.Second)
-		if _, err := tx.Exec(ctx, `INSERT INTO jobs(kind,payload,run_at) VALUES('merchant_accept_timeout',$1,$2)`,
-			fmt.Sprintf(`{"order_id":%q}`, orderID), runAt); err != nil {
+		runAt := time.Now().Add(time.Duration(acceptWin) * time.Second)
+		if err := s.enqueueTx(ctx, tx, JobMerchantAcceptTimeout, fmt.Sprintf(`{"order_id":%q}`, orderID), runAt); err != nil {
 			problem(w, 500, "Server error", err.Error())
 			return
 		}
@@ -611,12 +646,37 @@ func (s *Server) getOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	items, _ := s.orderItems(r.Context(), o.ID)
 	events, _ := s.orderEvents(r.Context(), o.ID)
-	v := s.orderView(r.Context(), o, role)
-	v["items"] = items
-	v["events"] = events
-	if dv := s.deliveryPublicView(r.Context(), o.ID); dv != nil {
-		v["delivery"] = dv
+	v := buildOrderDetail(s.orderView(r.Context(), o, role), items, events, s.deliveryPublicView(r.Context(), o.ID))
+	writeJSON(w, 200, map[string]any{"order": v})
+}
+
+// getMerchantOrder serves one store order on the merchant path with the same
+// detail envelope as the customer path (role "merchant": pickup code instead
+// of the customer PIN, plus the full live delivery view). Store owners read
+// their own orders; admins read any.
+func (s *Server) getMerchantOrder(w http.ResponseWriter, r *http.Request) {
+	c := claims(r)
+	o, err := s.loadOrder(r.Context(), r.PathValue("id"))
+	if err != nil {
+		problem(w, 404, "Not found", "order not found")
+		return
 	}
+	isAdmin := false
+	for _, rl := range c.Roles {
+		if rl == "admin" {
+			isAdmin = true
+		}
+	}
+	if !isAdmin {
+		m, err := s.fetchMerchant(r, c.Sub)
+		if err != nil || m["id"] != o.MerchantID {
+			problem(w, 403, "Forbidden", "not your order")
+			return
+		}
+	}
+	items, _ := s.orderItems(r.Context(), o.ID)
+	events, _ := s.orderEvents(r.Context(), o.ID)
+	v := buildOrderDetail(s.orderView(r.Context(), o, "merchant"), items, events, s.deliveryPublicView(r.Context(), o.ID))
 	writeJSON(w, 200, map[string]any{"order": v})
 }
 
@@ -665,7 +725,35 @@ func (s *Server) orderEvents(ctx context.Context, orderID string) ([]map[string]
 
 func (s *Server) listCustomerOrders(w http.ResponseWriter, r *http.Request) {
 	c := claims(r)
-	rows, err := s.db.Query(r.Context(), `SELECT `+orderCols+` FROM orders WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 50`, c.Sub)
+	pg := parsePagination(r.URL.Query())
+	status, ok := parseOrderStatusFilter(r.URL.Query().Get("status"))
+	if !ok {
+		problem(w, 400, "Validation failed", "status must be one of awaiting_payment, placed, accepted, ready, picked_up, delivered, completed, rejected, cancelled")
+		return
+	}
+	pattern, filtered, errMsg := parseSearch(r.URL.Query().Get("q"))
+	if errMsg != "" {
+		problem(w, 400, "Validation failed", errMsg)
+		return
+	}
+	base := `FROM orders WHERE customer_id=$1`
+	args := []any{c.Sub}
+	if status != "" {
+		args = append(args, status)
+		base += ` AND status=$` + strconv.Itoa(len(args))
+	}
+	if filtered {
+		args = append(args, pattern)
+		base += ` AND code ILIKE $` + strconv.Itoa(len(args)) + ` ESCAPE '\'`
+	}
+	var total int
+	if err := s.db.QueryRow(r.Context(), `SELECT COUNT(*) `+base, args...).Scan(&total); err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	pargs := append(append([]any{}, args...), pg.limit, pg.offset)
+	rows, err := s.db.Query(r.Context(), `SELECT `+orderCols+` `+base+` ORDER BY created_at DESC LIMIT $`+
+		strconv.Itoa(len(pargs)-1)+` OFFSET $`+strconv.Itoa(len(pargs)), pargs...)
 	if err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
@@ -679,7 +767,7 @@ func (s *Server) listCustomerOrders(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, s.orderView(r.Context(), o, "customer"))
 	}
-	writeJSON(w, 200, map[string]any{"orders": out})
+	writePaginatedList(w, "orders", out, pg.page, pg.perPage, total)
 }
 
 func (s *Server) cancelOrder(w http.ResponseWriter, r *http.Request) {
@@ -744,6 +832,28 @@ func (s *Server) merchantOwnsOrder(w http.ResponseWriter, r *http.Request, o ord
 	return true
 }
 
+// defaultPrepMinutes backs merchants without a configured prep time.
+const defaultPrepMinutes = 15
+
+// acceptTiming is what a merchant accept turns into the order promise:
+// kitchen prep drives ready_at_est, the delivery window (minutes after
+// accept, CMS-editable) drives window_start/window_end. acceptOrder and the
+// GBK history seed share it so seeded orders read like live ones.
+type acceptTiming struct {
+	PrepMin, WindowMinMin, WindowMaxMin int
+}
+
+// at returns ready_at_est, window_start and window_end for an accept at t.
+func (a acceptTiming) at(t time.Time) (readyEst, winStart, winEnd time.Time) {
+	prep := a.PrepMin
+	if prep <= 0 {
+		prep = defaultPrepMinutes
+	}
+	return t.Add(time.Duration(prep) * time.Minute),
+		t.Add(time.Duration(a.WindowMinMin) * time.Minute),
+		t.Add(time.Duration(a.WindowMaxMin) * time.Minute)
+}
+
 func (s *Server) acceptOrder(w http.ResponseWriter, r *http.Request) {
 	o, err := s.loadOrder(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -759,13 +869,9 @@ func (s *Server) acceptOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	var prep int
 	_ = s.db.QueryRow(r.Context(), `SELECT prep_minutes FROM merchants WHERE id=$1`, o.MerchantID).Scan(&prep)
-	if prep <= 0 {
-		prep = 15
-	}
-	now := time.Now()
-	readyEst := now.Add(time.Duration(prep) * time.Minute)
-	winStart := now.Add(time.Duration(s.cfg.Order.WindowMinMinutes) * time.Minute)
-	winEnd := now.Add(time.Duration(s.cfg.Order.WindowMaxMinutes) * time.Minute)
+	// A9: the customer-facing 30–60 min promise follows the CMS settings editor.
+	_, winMin, winMax := s.effectiveOrderWindows(r.Context(), s.merchantCountryForOrder(r.Context(), o.ID))
+	readyEst, winStart, winEnd := acceptTiming{PrepMin: prep, WindowMinMin: winMin, WindowMaxMin: winMax}.at(time.Now())
 	pickup := randomDigits(4)
 	_, _, _, err = s.transitionOrder(r.Context(), o.ID, order.StatusPlaced, order.StatusAccepted,
 		"merchant", claims(r).Sub, "merchant accepted", func(ctx context.Context, tx pgx.Tx) error {
@@ -787,11 +893,11 @@ func (s *Server) acceptOrder(w http.ResponseWriter, r *http.Request) {
 				JOIN merchants m ON m.id=o.merchant_id WHERE o.id=$1) WHERE order_id=$1`, o.ID)
 			if deliveryID != "" {
 				now := time.Now()
-				if err := enqueueTx(ctx, tx, "search_timeout", fmt.Sprintf(`{"delivery_id":%q}`, deliveryID),
-					now.Add(time.Duration(s.cfg.Dispatch.SearchS)*time.Second)); err != nil {
+				if err := s.enqueueTx(ctx, tx, "search_timeout", fmt.Sprintf(`{"delivery_id":%q}`, deliveryID),
+					now.Add(s.searchWindow(ctx, o.ID))); err != nil {
 					return err
 				}
-				if err := enqueueTx(ctx, tx, "dispatch_run", fmt.Sprintf(`{"delivery_id":%q}`, deliveryID), now); err != nil {
+				if err := s.enqueueTx(ctx, tx, "dispatch_run", fmt.Sprintf(`{"delivery_id":%q}`, deliveryID), now); err != nil {
 					return err
 				}
 			}
@@ -852,8 +958,7 @@ func (s *Server) rejectOrder(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "Server error", err.Error())
 		return
 	}
-	_, _ = s.db.Exec(r.Context(), `INSERT INTO jobs(kind,payload) VALUES('push_send',$1)`,
-		fmt.Sprintf(`{"user_id":%q,"title":"Order update","body":"The restaurant could not take your order; you were refunded in full."}`, o.CustomerID))
+	s.queuePush(o.CustomerID, "Order update", "The restaurant could not take your order; you were refunded in full.")
 	updated, _ := s.loadOrder(r.Context(), o.ID)
 	writeJSON(w, 200, map[string]any{"order": s.orderView(r.Context(), updated, "merchant"), "refunded": true})
 }
@@ -881,14 +986,93 @@ func (s *Server) readyOrder(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "Server error", err.Error())
 		return
 	}
-	// Ready early: the assigned courier heads over at once (the nudged_at
-	// guard drops this if the scheduled nudge already fired).
-	if d, err := s.loadDeliveryByOrder(r.Context(), o.ID); err == nil &&
-		(d.Status == DeliveryAssigned || d.Status == DeliveryAtPickup) && d.NudgedAt == nil {
-		s.enqueueNow("leave_now_nudge", fmt.Sprintf(`{"delivery_id":%q}`, d.ID), time.Now())
+	// Two cases once the food is packed:
+	//  - a courier already claimed the order: they head over at once (the
+	//    nudged_at guard drops this if the scheduled nudge already fired);
+	//  - nobody claimed it yet: the accept-time search wave (default 4 min)
+	//    is normally long dead after ~15 min of cooking, so "ready" starts a
+	//    fresh courier wave — couriers near the kitchen right now get
+	//    real-time offers, the customer and kitchen hear the search resumed.
+	if d, err := s.loadDeliveryByOrder(r.Context(), o.ID); err == nil {
+		switch {
+		case (d.Status == DeliveryAssigned || d.Status == DeliveryAtPickup) && d.NudgedAt == nil:
+			s.enqueueNow("leave_now_nudge", fmt.Sprintf(`{"delivery_id":%q}`, d.ID), time.Now())
+		case canRestartCourierSearch(d.Status, d.CourierID != nil):
+			s.restartCourierSearch(r.Context(), d.ID, true)
+		}
 	}
 	updated, _ := s.loadOrder(r.Context(), o.ID)
 	writeJSON(w, 200, map[string]any{"order": s.orderView(r.Context(), updated, "merchant")})
+}
+
+// cancelMerchantOrder lets the kitchen cancel after accept (accepted/ready,
+// before pickup): full refund, delivery cancelled so the courier can no
+// longer pick up, and push notices to the customer and the courier.
+func (s *Server) cancelMerchantOrder(w http.ResponseWriter, r *http.Request) {
+	o, err := s.loadOrder(r.Context(), r.PathValue("id"))
+	if err != nil {
+		problem(w, 404, "Not found", "order not found")
+		return
+	}
+	if !s.merchantOwnsOrder(w, r, o) {
+		return
+	}
+	if o.Status != order.StatusAccepted && o.Status != order.StatusReady {
+		problem(w, 409, "Conflict", "only accepted or ready orders can be cancelled by the restaurant")
+		return
+	}
+	var b struct {
+		Reason string `json:"reason"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decode(w, r, &b) {
+			return
+		}
+	}
+	reason := strings.TrimSpace(b.Reason)
+	from := o.Status
+	var courierID *string
+	var courierStatus string
+	if d, derr := s.loadDeliveryByOrder(r.Context(), o.ID); derr == nil {
+		courierID = d.CourierID
+		courierStatus = d.Status
+		if d.Status == DeliveryPickedUp || d.Status == DeliveryAtDropoff || d.Status == DeliveryDelivered {
+			problem(w, 409, "Conflict", "the courier already picked up this order; contact support")
+			return
+		}
+	}
+	_, _, _, err = s.transitionOrder(r.Context(), o.ID, from, order.StatusCancelled,
+		"merchant", claims(r).Sub, "cancelled by restaurant: "+reason, func(ctx context.Context, tx pgx.Tx) error {
+			if _, err := tx.Exec(ctx, `UPDATE orders SET payment_status='refunded', cancel_reason=$2 WHERE id=$1`, o.ID, reason); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE deliveries SET status='cancelled', cancel_note='merchant_cancel'
+				WHERE order_id=$1 AND status NOT IN ('delivered','cancelled')`, o.ID); err != nil {
+				return err
+			}
+			legs, key := refundLegsFor(o)
+			markCardPaymentRefunded(ctx, tx, o.ID)
+			return postEntry(ctx, tx, "order_refund", key, "order", o.ID, legs)
+		})
+	if err == order.ErrForbiddenTransition || err == order.ErrUnknownStatus {
+		problem(w, 409, "Conflict", "order changed; refresh and try again")
+		return
+	}
+	if err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	s.queuePush(o.CustomerID, "Order cancelled by the restaurant",
+		"The restaurant cancelled your order; you were refunded in full.")
+	if courierID != nil && *courierID != "" &&
+		(courierStatus == DeliverySearching || courierStatus == DeliveryOffered ||
+			courierStatus == DeliveryAssigned || courierStatus == DeliveryAtPickup ||
+			courierStatus == DeliveryStaffSearch) {
+		s.queuePush(*courierID, "Delivery cancelled",
+			"The restaurant cancelled the order; do not pick it up.")
+	}
+	updated, _ := s.loadOrder(r.Context(), o.ID)
+	writeJSON(w, 200, map[string]any{"order": s.orderView(r.Context(), updated, "merchant"), "refunded": true})
 }
 
 func (s *Server) listMerchantOrders(w http.ResponseWriter, r *http.Request) {
@@ -898,21 +1082,98 @@ func (s *Server) listMerchantOrders(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "Validation failed", "create your store profile first")
 		return
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT `+orderCols+` FROM orders WHERE merchant_id=$1 ORDER BY created_at DESC LIMIT 50`, m["id"])
+	pg := parsePagination(r.URL.Query())
+	status, ok := parseOrderStatusFilter(r.URL.Query().Get("status"))
+	if !ok {
+		problem(w, 400, "Validation failed", "status must be one of awaiting_payment, placed, accepted, ready, picked_up, delivered, completed, rejected, cancelled")
+		return
+	}
+	pattern, filtered, errMsg := parseSearch(r.URL.Query().Get("q"))
+	if errMsg != "" {
+		problem(w, 400, "Validation failed", errMsg)
+		return
+	}
+	base := `FROM orders WHERE merchant_id=$1`
+	args := []any{m["id"]}
+	if status != "" {
+		args = append(args, status)
+		base += ` AND status=$` + strconv.Itoa(len(args))
+	}
+	if filtered {
+		args = append(args, pattern)
+		base += ` AND code ILIKE $` + strconv.Itoa(len(args)) + ` ESCAPE '\'`
+	}
+	var total int
+	if err := s.db.QueryRow(r.Context(), `SELECT COUNT(*) `+base, args...).Scan(&total); err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	pargs := append(append([]any{}, args...), pg.limit, pg.offset)
+	rows, err := s.db.Query(r.Context(), `SELECT `+orderCols+` `+base+` ORDER BY created_at DESC LIMIT $`+
+		strconv.Itoa(len(pargs)-1)+` OFFSET $`+strconv.Itoa(len(pargs)), pargs...)
 	if err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
 	}
 	defer rows.Close()
 	out := []map[string]any{}
+	ids := []string{}
+	scanned := []orderRow{}
 	for rows.Next() {
 		o, err := scanOrderRow(rows)
 		if err != nil {
 			continue
 		}
-		out = append(out, s.orderView(r.Context(), o, "merchant"))
+		scanned = append(scanned, o)
+		ids = append(ids, o.ID)
 	}
-	writeJSON(w, 200, map[string]any{"orders": out})
+	// Live dispatch lines for just this page in one query, so every row
+	// carries the same `delivery` shape as order detail (PLAN.md §9).
+	// The assigned courier's public first name + mode ride along so the
+	// kitchen sees WHO accepted the order without a second fetch.
+	lines := map[string]map[string]any{}
+	if len(ids) > 0 {
+		if drows, err := s.db.Query(r.Context(), `SELECT d.order_id, d.status, d.eta_s,
+			(SELECT split_part(u.name,' ',1) FROM users u WHERE u.id=d.courier_id),
+			CASE WHEN d.type='staff' AND d.courier_id IS NOT NULL THEN 'staff' ELSE
+			COALESCE((SELECT c.mode FROM couriers c WHERE c.user_id=d.courier_id),
+				(SELECT CASE WHEN ms.merchant_id IS NOT NULL THEN 'staff' ELSE NULL END
+					FROM merchant_staff ms JOIN users su ON lower(su.email)=lower(ms.email)
+					WHERE su.id=d.courier_id AND ms.merchant_id=o.merchant_id LIMIT 1)) END
+			FROM deliveries d JOIN orders o ON o.id=d.order_id WHERE d.order_id = ANY($1)`, ids); err == nil {
+			defer drows.Close()
+			for drows.Next() {
+				var oid, st string
+				var etaVal int
+				var cname, cmode *string
+				if err := drows.Scan(&oid, &st, &etaVal, &cname, &cmode); err != nil {
+					continue
+				}
+				// Empty names are the same as no name (never show a blank).
+				if cname != nil && *cname == "" {
+					cname = nil
+				}
+				if cmode != nil && *cmode == "" {
+					cmode = nil
+				}
+				// ETA 0 before assignment is "no plan yet": render null so the
+				// kitchen can tell "searching" apart from "courier coming".
+				var etaPtr *int
+				if cname != nil {
+					etaPtr = &etaVal
+				}
+				lines[oid] = merchantDeliveryLine(st, etaPtr, cname, cmode)
+			}
+		}
+	}
+	for _, o := range scanned {
+		v := s.orderView(r.Context(), o, "merchant")
+		if line, ok := lines[o.ID]; ok {
+			v["delivery"] = line
+		}
+		out = append(out, v)
+	}
+	writePaginatedList(w, "orders", out, pg.page, pg.perPage, total)
 }
 
 // ---------- merchant_accept_timeout worker ----------
@@ -937,8 +1198,7 @@ func (s *Server) handleMerchantTimeout(ctx context.Context, orderID string) {
 		s.log.Warn("merchant timeout transition failed", "order", orderID, "err", err)
 		return
 	}
-	_, _ = s.db.Exec(ctx, `INSERT INTO jobs(kind,payload) VALUES('push_send',$1)`,
-		fmt.Sprintf(`{"user_id":%q,"title":"Order update","body":"The restaurant did not respond; you were refunded in full."}`, o.CustomerID))
+	s.queuePush(o.CustomerID, "Order update", "The restaurant did not respond; you were refunded in full.")
 }
 
 // ---------- small helpers ----------

@@ -4,7 +4,7 @@ package ai
 // results stay reproducible when prompts change.
 
 const (
-	PromptMenuV1      = "menu-v1"
+	PromptMenuV2      = "menu-v2"
 	PromptTranslateV1 = "translate-v1"
 	PromptTrustV1     = "trust-v1"
 	PromptProofV1     = "proof-v1"
@@ -13,15 +13,16 @@ const (
 	PromptCoachV1     = "coach-v1"
 )
 
-// MenuSystemV1 instructs Snap-a-Menu. Prices are NEVER read: the model must
+// MenuSystemV2 instructs Snap-a-Menu. Prices are NEVER read: the model must
 // leave every price null so the merchant types them (flag when unreadable).
-const MenuSystemV1 = `You extract a restaurant menu from a photo description for Trackfud, a health-first food delivery app.
+// V2 drops spill_risk: dispatch no longer filters on spill, so the model
+// stops labeling it.
+const MenuSystemV2 = `You extract a restaurant menu from a photo description for Trackfud, a health-first food delivery app.
 
 Rules:
 - Output only JSON matching the provided schema.
 - names: dish names in each requested language; fall back to the source language when unsure.
 - size_class: S (fits one hand / small box), M (standard meal box), L (family tray / pizza box).
-- spill_risk: low (solid, wrapped), medium (saucy but lidded), high (open cup, soup, unlidded drink).
 - travels_well: true only when the dish survives 30-60 minutes in an insulated bag on foot or bicycle.
 - NEVER output a price. Leave price Minor null and set price_unreadable true. The merchant types every price by hand.`
 

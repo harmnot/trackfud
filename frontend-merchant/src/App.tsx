@@ -9,7 +9,7 @@ import {
 } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, savedUser, setSession, ApiError } from "./lib/api";
+import { api, logout, savedUser, setSession, ApiError } from "./lib/api";
 import {
     Badge,
     Button,
@@ -28,6 +28,9 @@ import MenuPage from "./features/menu/MenuPage";
 import ImportPage from "./features/menu/ImportPage";
 import OrdersPage from "./features/orders/OrdersPage";
 import EarningsPage from "./features/orders/EarningsPage";
+import AgreementPage from "./features/setup/AgreementPage";
+import { RequireAuth } from "./features/auth/RequireAuth";
+import { GoogleMapPicker } from "./features/setup/GoogleMapPicker";
 import i18n from "./i18n";
 
 type Merchant = {
@@ -177,6 +180,23 @@ function Shell({
     const { t } = useTranslation();
     const loc = useLocation();
     const user = savedUser();
+    const [moreOpen, setMoreOpen] = useState(false);
+    useEffect(() => {
+        setMoreOpen(false);
+    }, [loc.pathname]);
+    const items = [
+        { to: "/setup", key: "nav.setup", icon: ICONS.shop },
+        { to: "/orders", key: "nav.orders", icon: ICONS.bell },
+        { to: "/menu", key: "nav.menu", icon: ICONS.menu },
+        { to: "/menu/import", key: "nav.import", icon: ICONS.snap },
+        { to: "/earnings", key: "nav.earn", icon: ICONS.coins },
+        { to: "/agreement", key: "nav.agreement", icon: ICONS.doc },
+        { to: "/staff", key: "nav.staff", icon: ICONS.team },
+        { to: "/status", key: "nav.status", icon: ICONS.flag },
+    ];
+    const primary = items.slice(0, 4);
+    const overflow = items.slice(4);
+    const overflowActive = overflow.some((i) => loc.pathname === i.to);
     return (
         <div className="tb-shell">
             <header className="tb-topbar">
@@ -189,105 +209,127 @@ function Shell({
                         <small>Trackfud · Merchant</small>
                         <strong>{hello}</strong>
                     </Link>
-                    <span className="flex items-center gap-2">
-                        <Dropdown
-                            label="Language"
-                            value={i18n.language}
-                            options={[
-                                { value: "en", label: "English" },
-                                { value: "id", label: "Indonesia" },
-                                { value: "ms", label: "Melayu" },
-                            ]}
-                            onChange={(v) => {
-                                localStorage.setItem("tb:merchant:lang", v);
-                                void i18n.changeLanguage(v);
-                            }}
-                        />
-                        <Link
-                            to={user ? "/status" : "/login"}
-                            className="tb-avatar"
-                            aria-label={t("nav.status")}
-                        >
-                            {user ? user.email.slice(0, 1).toUpperCase() : "?"}
-                        </Link>
-                    </span>
+                    {/* Account cluster is for signed-in users only. */}
+                    {user && (
+                        <span className="flex items-center gap-2">
+                            <Dropdown
+                                label="Language"
+                                value={i18n.language}
+                                options={[
+                                    { value: "en", label: "English" },
+                                    { value: "id", label: "Indonesia" },
+                                    { value: "ms", label: "Melayu" },
+                                ]}
+                                onChange={(v) => {
+                                    localStorage.setItem("tb:merchant:lang", v);
+                                    void i18n.changeLanguage(v);
+                                }}
+                            />
+                            <Link
+                                to="/status"
+                                className="tb-avatar"
+                                aria-label={t("nav.status")}
+                            >
+                                {user.email.slice(0, 1).toUpperCase()}
+                            </Link>
+                        </span>
+                    )}
                 </div>
             </header>
             <main className="flex-1 px-4 pt-4 pb-28" key={loc.pathname}>
                 {children}
             </main>
-            <nav className="tb-nav" aria-label="Main">
-                <Link
-                    to="/setup"
-                    aria-current={
-                        loc.pathname === "/setup" ? "page" : undefined
-                    }
-                >
-                    {ICONS.shop}
-                    {t("nav.setup")}
-                </Link>
-                <Link
-                    to="/orders"
-                    aria-current={
-                        loc.pathname === "/orders" ? "page" : undefined
-                    }
-                >
-                    {ICONS.bell}
-                    {t("nav.orders")}
-                </Link>
-                <Link
-                    to="/earnings"
-                    aria-current={
-                        loc.pathname === "/earnings" ? "page" : undefined
-                    }
-                >
-                    {ICONS.coins}
-                    {t("nav.earn")}
-                </Link>
-                <Link
-                    to="/menu"
-                    aria-current={loc.pathname === "/menu" ? "page" : undefined}
-                >
-                    {ICONS.menu}
-                    {t("nav.menu")}
-                </Link>
-                <Link
-                    to="/menu/import"
-                    aria-current={
-                        loc.pathname === "/menu/import" ? "page" : undefined
-                    }
-                >
-                    {ICONS.snap}
-                    {t("nav.import")}
-                </Link>
-                <Link
-                    to="/agreement"
-                    aria-current={
-                        loc.pathname === "/agreement" ? "page" : undefined
-                    }
-                >
-                    {ICONS.doc}
-                    {t("nav.agreement")}
-                </Link>
-                <Link
-                    to="/staff"
-                    aria-current={
-                        loc.pathname === "/staff" ? "page" : undefined
-                    }
-                >
-                    {ICONS.team}
-                    {t("nav.staff")}
-                </Link>
-                <Link
-                    to={user ? "/status" : "/login"}
-                    aria-current={
-                        loc.pathname === "/status" ? "page" : undefined
-                    }
-                >
-                    {ICONS.flag}
-                    {t("nav.status")}
-                </Link>
-            </nav>
+            {/* No navbar for guests. */}
+            {user && (
+                <nav className="tb-nav" aria-label="Main">
+                    <div className="tb-nav-bar">
+                        {primary.map((i) => (
+                            <Link
+                                key={i.to + i.key}
+                                to={i.to}
+                                className="tb-nav-link"
+                                aria-current={
+                                    loc.pathname === i.to ? "page" : undefined
+                                }
+                            >
+                                <span className="tb-nav-icon" aria-hidden>
+                                    {i.icon}
+                                </span>
+                                <span className="tb-nav-label">{t(i.key)}</span>
+                            </Link>
+                        ))}
+                        {overflow.map((i) => (
+                            <Link
+                                key={i.to + i.key}
+                                to={i.to}
+                                className="tb-nav-link tb-nav-link-extra"
+                                aria-current={
+                                    loc.pathname === i.to ? "page" : undefined
+                                }
+                            >
+                                <span className="tb-nav-icon" aria-hidden>
+                                    {i.icon}
+                                </span>
+                                <span className="tb-nav-label">{t(i.key)}</span>
+                            </Link>
+                        ))}
+                        <button
+                            type="button"
+                            className="tb-nav-link tb-nav-more-btn"
+                            aria-expanded={moreOpen}
+                            aria-haspopup="dialog"
+                            aria-current={overflowActive ? "page" : undefined}
+                            onClick={() => setMoreOpen((o) => !o)}
+                        >
+                            <span className="tb-nav-icon" aria-hidden>
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2.2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                >
+                                    <circle cx="5" cy="12" r="1.6" />
+                                    <circle cx="12" cy="12" r="1.6" />
+                                    <circle cx="19" cy="12" r="1.6" />
+                                </svg>
+                            </span>
+                            <span className="tb-nav-label">{t("nav.more")}</span>
+                        </button>
+                    </div>
+                </nav>
+            )}
+            {moreOpen && (
+                <>
+                    <button
+                        type="button"
+                        className="tb-nav-scrim"
+                        aria-label={t("common.close")}
+                        onClick={() => setMoreOpen(false)}
+                    />
+                    <div
+                        className="tb-nav-sheet"
+                        role="dialog"
+                        aria-label={t("nav.more")}
+                    >
+                        <div className="tb-nav-sheet-handle" aria-hidden />
+                        {overflow.map((i) => (
+                            <Link
+                                key={i.to + i.key}
+                                to={i.to}
+                                aria-current={
+                                    loc.pathname === i.to ? "page" : undefined
+                                }
+                                onClick={() => setMoreOpen(false)}
+                            >
+                                {i.icon}
+                                {t(i.key)}
+                            </Link>
+                        ))}
+                    </div>
+                </>
+            )}
         </div>
     );
 }
@@ -353,6 +395,8 @@ function AuthPage({ mode }: { mode: "login" | "signup" }) {
                                 className="tb-input"
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
+                                placeholder={t("auth.namePh", { defaultValue: "e.g. Budi Santoso" })}
+                                autoComplete="name"
                             />
                         </Field>
                     )}
@@ -386,17 +430,6 @@ function AuthPage({ mode }: { mode: "login" | "signup" }) {
                               : t("auth.signup")}
                     </Button>
                 </form>
-                <div className="mt-3">
-                    <Button
-                        variant="ink"
-                        block
-                        onClick={() =>
-                            void submit("/auth/demo-login", { app: "merchant" })
-                        }
-                    >
-                        {t("auth.demo")}
-                    </Button>
-                </div>
                 <p className="mt-4 text-sm text-center font-bold">
                     <Link
                         to={mode === "login" ? "/signup" : "/login"}
@@ -438,7 +471,6 @@ function Setup() {
             DAYS.map((d) => [d, { open: "08:00", close: "21:00" }]),
         ),
     );
-    const [search, setSearch] = useState("");
     const [msg, setMsg] = useState("");
     useEffect(() => {
         const m = me.data?.merchant;
@@ -459,38 +491,6 @@ function Setup() {
                 setHours(m.opening_hours);
         }
     }, [me.data]);
-    function onMapClick(e: React.MouseEvent<HTMLDivElement>) {
-        const rect = e.currentTarget.getBoundingClientRect();
-        const dx = (e.clientX - rect.left) / rect.width - 0.5;
-        const dy = (e.clientY - rect.top) / rect.height - 0.5;
-        setForm((f) => ({
-            ...f,
-            lat: (parseFloat(f.lat) - dy * 0.02).toFixed(6),
-            lng: (parseFloat(f.lng) + dx * 0.02).toFixed(6),
-        }));
-    }
-    async function searchAddress() {
-        try {
-            const res = await fetch(
-                `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(search)}`,
-            );
-            const data = (await res.json()) as Array<{
-                lat: string;
-                lon: string;
-                display_name: string;
-            }>;
-            if (data[0])
-                setForm((f) => ({
-                    ...f,
-                    lat: data[0]!.lat,
-                    lng: data[0]!.lon,
-                    address: data[0]!.display_name,
-                }));
-            else setMsg("No result — type lat/lng manually.");
-        } catch {
-            setMsg("Address search offline — type lat/lng manually.");
-        }
-    }
     async function save() {
         const body = {
             ...form,
@@ -573,6 +573,8 @@ function Setup() {
                                 onChange={(e) =>
                                     setForm({ ...form, name: e.target.value })
                                 }
+                                placeholder={t("setup.namePh", { defaultValue: "e.g. Warung Sate Madura" })}
+                                autoComplete="organization"
                             />
                         </Field>
                     </Item>
@@ -600,6 +602,8 @@ function Setup() {
                                             country: e.target.value,
                                         })
                                     }
+                                    placeholder={t("setup.countryPh", { defaultValue: "e.g. ID" })}
+                                    autoComplete="country"
                                 />
                             </Field>
                             <Field label={t("setup.currency")}>
@@ -612,6 +616,7 @@ function Setup() {
                                             currency: e.target.value,
                                         })
                                     }
+                                    placeholder={t("setup.currencyPh", { defaultValue: "e.g. IDR" })}
                                 />
                             </Field>
                             <Field label={t("setup.timezone")}>
@@ -624,6 +629,7 @@ function Setup() {
                                             timezone: e.target.value,
                                         })
                                     }
+                                    placeholder={t("setup.timezonePh", { defaultValue: "e.g. Asia/Jakarta" })}
                                 />
                             </Field>
                         </div>
@@ -639,65 +645,35 @@ function Setup() {
                                         address: e.target.value,
                                     })
                                 }
+                                placeholder={t("setup.addressPh", { defaultValue: "e.g. Jl. Sudirman No. 12, Jakarta" })}
+                                autoComplete="street-address"
                             />
                         </Field>
                     </Item>
                     <Item index={4}>
-                        <span className="flex gap-2">
-                            <input
-                                className="tb-input"
-                                placeholder="Search address…"
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
-                            />
-                            <Button
-                                type="button"
-                                variant="soft"
-                                onClick={() => void searchAddress()}
-                            >
-                                {t("setup.search")}
-                            </Button>
-                        </span>
+                        <GoogleMapPicker
+                            lat={
+                                Number.isFinite(parseFloat(form.lat))
+                                    ? parseFloat(form.lat)
+                                    : -6.2088
+                            }
+                            lng={
+                                Number.isFinite(parseFloat(form.lng))
+                                    ? parseFloat(form.lng)
+                                    : 106.8456
+                            }
+                            onPick={(p) =>
+                                setForm((f) => ({
+                                    ...f,
+                                    lat: p.lat.toFixed(6),
+                                    lng: p.lng.toFixed(6),
+                                    address: p.address ?? f.address,
+                                }))
+                            }
+                        />
+                        <p className="tb-sub mt-2">{t("setup.pinHint")}</p>
                     </Item>
                     <Item index={5}>
-                        <Button
-                            variant="soft"
-                            block
-                            onClick={() =>
-                                navigator.geolocation.getCurrentPosition((p) =>
-                                    setForm((f) => ({
-                                        ...f,
-                                        lat: String(p.coords.latitude),
-                                        lng: String(p.coords.longitude),
-                                    })),
-                                )
-                            }
-                        >
-                            ◎ {t("setup.useMine")}
-                        </Button>
-                    </Item>
-                    <Item index={6}>
-                        <div
-                            role="application"
-                            aria-label="Pin map"
-                            onClick={onMapClick}
-                            className="tb-map"
-                        >
-                            <span className="tb-pin" aria-hidden>
-                                📍
-                            </span>
-                            <p className="font-mono text-sm mt-1">
-                                {form.lat}, {form.lng}
-                            </p>
-                            <p
-                                className="text-xs mt-1"
-                                style={{ opacity: 0.75 }}
-                            >
-                                {t("setup.pinHint")}
-                            </p>
-                        </div>
-                    </Item>
-                    <Item index={7}>
                         <div className="grid grid-cols-2 gap-2">
                             <Field label={t("setup.lat")}>
                                 <input
@@ -709,6 +685,8 @@ function Setup() {
                                             lat: e.target.value,
                                         })
                                     }
+                                    placeholder={t("setup.latPh", { defaultValue: "e.g. -6.2088" })}
+                                    inputMode="decimal"
                                 />
                             </Field>
                             <Field label={t("setup.lng")}>
@@ -721,11 +699,13 @@ function Setup() {
                                             lng: e.target.value,
                                         })
                                     }
+                                    placeholder={t("setup.lngPh", { defaultValue: "e.g. 106.8456" })}
+                                    inputMode="decimal"
                                 />
                             </Field>
                         </div>
                     </Item>
-                    <Item index={8}>
+                    <Item index={6}>
                         <Field label={t("setup.pickup")}>
                             <input
                                 className="tb-input"
@@ -736,10 +716,11 @@ function Setup() {
                                         pickup_note: e.target.value,
                                     })
                                 }
+                                placeholder={t("setup.pickupPh", { defaultValue: "e.g. Side door, call on arrival" })}
                             />
                         </Field>
                     </Item>
-                    <Item index={9}>
+                    <Item index={7}>
                         <Field label={t("setup.prep")}>
                             <input
                                 className="tb-input"
@@ -753,10 +734,11 @@ function Setup() {
                                             parseInt(e.target.value, 10) || 15,
                                     })
                                 }
+                                placeholder={t("setup.prepPh", { defaultValue: "e.g. 15" })}
                             />
                         </Field>
                     </Item>
-                    <Item index={10}>
+                    <Item index={8}>
                         <div className="tb-card">
                             <p className="font-extrabold mb-2">
                                 {t("setup.hours")}
@@ -819,88 +801,9 @@ function Setup() {
 }
 
 function Agreement() {
-    const { t } = useTranslation();
-    const ag = useQuery({
-        queryKey: ["agreement"],
-        queryFn: () =>
-            api<{ version: string; text: string }>(
-                "/merchant/agreement/current",
-            ),
-    });
-    const [signer, setSigner] = useState("");
-    const [tick, setTick] = useState(false);
-    const [msg, setMsg] = useState("");
-    async function sign() {
-        try {
-            await api("/merchant/merchants/me/agreement", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    signer_name: signer,
-                    agreed: tick,
-                    version: ag.data?.version,
-                }),
-            });
-            setMsg(t("agree.done"));
-        } catch (e) {
-            setMsg(e instanceof ApiError ? e.message : t("common.error"));
-        }
-    }
     return (
         <Shell hello="Step two">
-            <Page>
-                <h1 className="tb-display">{t("agree.title")}</h1>
-                <p className="tb-sub">A fair partnership, in plain words.</p>
-                <Steps
-                    total={3}
-                    done={2}
-                    labels={["Store", "Agreement", "Staff"]}
-                />
-                <div className="tb-hero mt-3" style={{ minHeight: 130 }}>
-                    <img src={img("hero-chef.jpg")} alt="" />
-                    <div className="tb-hero-body">
-                        <span className="tb-kicker">
-                            {ag.data?.version ?? "v1"}
-                        </span>
-                        <p
-                            className="tb-hero-title"
-                            style={{ fontSize: "1.3rem" }}
-                        >
-                            Partners, not just vendors
-                        </p>
-                    </div>
-                </div>
-                {ag.isLoading ? (
-                    <div className="tb-skel mt-3" style={{ height: 200 }} />
-                ) : (
-                    <pre className="tb-doc mt-3">{ag.data?.text ?? ""}</pre>
-                )}
-                <div className="flex flex-col gap-3 mt-3">
-                    <Field label={t("agree.signer")}>
-                        <input
-                            className="tb-input"
-                            value={signer}
-                            onChange={(e) => setSigner(e.target.value)}
-                        />
-                    </Field>
-                    <label className="flex gap-2 items-start font-bold text-sm">
-                        <input
-                            type="checkbox"
-                            checked={tick}
-                            onChange={(e) => setTick(e.target.checked)}
-                        />{" "}
-                        {t("agree.tick")}
-                    </label>
-                    <Button
-                        block
-                        disabled={!tick || !signer}
-                        onClick={() => void sign()}
-                    >
-                        {t("agree.sign")}
-                    </Button>
-                    {msg && <Note tone="info">{msg}</Note>}
-                </div>
-            </Page>
+            <AgreementPage />
         </Shell>
     );
 }
@@ -1079,7 +982,7 @@ function StatusPage() {
                                     </strong>
                                     <Badge
                                         green={
-                                            me.data.merchant.status !== "draft"
+                                            me.data.merchant.status === "approved"
                                         }
                                     >
                                         {me.data.merchant.status}
@@ -1102,8 +1005,10 @@ function StatusPage() {
                         variant="danger"
                         block
                         onClick={() => {
-                            setSession(null);
-                            location.href = "/merchant/login";
+                            void logout().finally(() => {
+                                setSession(null);
+                                location.href = "/merchant/login";
+                            });
                         }}
                     >
                         {t("auth.logout")}
@@ -1120,42 +1025,78 @@ export default function App() {
             <Route path="/" element={<Navigate to="/setup" replace />} />
             <Route path="/login" element={<AuthPage mode="login" />} />
             <Route path="/signup" element={<AuthPage mode="signup" />} />
-            <Route path="/setup" element={<Setup />} />
+            <Route
+                path="/setup"
+                element={
+                    <RequireAuth>
+                        <Setup />
+                    </RequireAuth>
+                }
+            />
             <Route
                 path="/menu"
                 element={
-                    <Shell hello="Your menu">
-                        <MenuPage />
-                    </Shell>
+                    <RequireAuth>
+                        <Shell hello="Your menu">
+                            <MenuPage />
+                        </Shell>
+                    </RequireAuth>
                 }
             />
             <Route
                 path="/menu/import"
                 element={
-                    <Shell hello="Snap it">
-                        <ImportPage />
-                    </Shell>
+                    <RequireAuth>
+                        <Shell hello="Snap it">
+                            <ImportPage />
+                        </Shell>
+                    </RequireAuth>
                 }
             />
-            <Route path="/agreement" element={<Agreement />} />
+            <Route
+                path="/agreement"
+                element={
+                    <RequireAuth>
+                        <Agreement />
+                    </RequireAuth>
+                }
+            />
             <Route
                 path="/orders"
                 element={
-                    <Shell hello="Kitchen live">
-                        <OrdersPage />
-                    </Shell>
+                    <RequireAuth>
+                        <Shell hello="Kitchen live">
+                            <OrdersPage />
+                        </Shell>
+                    </RequireAuth>
                 }
             />
             <Route
                 path="/earnings"
                 element={
-                    <Shell hello="Your earnings">
-                        <EarningsPage />
-                    </Shell>
+                    <RequireAuth>
+                        <Shell hello="Your earnings">
+                            <EarningsPage />
+                        </Shell>
+                    </RequireAuth>
                 }
             />
-            <Route path="/staff" element={<StaffPage />} />
-            <Route path="/status" element={<StatusPage />} />
+            <Route
+                path="/staff"
+                element={
+                    <RequireAuth>
+                        <StaffPage />
+                    </RequireAuth>
+                }
+            />
+            <Route
+                path="/status"
+                element={
+                    <RequireAuth>
+                        <StatusPage />
+                    </RequireAuth>
+                }
+            />
             <Route path="*" element={<Navigate to="/setup" replace />} />
         </Routes>
     );

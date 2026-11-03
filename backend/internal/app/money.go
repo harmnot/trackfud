@@ -118,42 +118,64 @@ type paddleEvent struct {
 
 // parsePaddleEvent reads the Paddle Billing shape
 // {event_id, event_type, data:{id, status, custom_data:{payment_id}}},
-// tolerating the field aliases Paddle documents.
+// tolerating the field aliases Paddle documents in the real dashboard:
+//   - event id may arrive as notification_id (older docs / retries)
+//   - transaction id may arrive as data.id or data.transaction_id
+//   - custom_data may be snake_case or camelCase customData
+//   - status may sit at data.status (transactions API) — unknown statuses
+//     are passed through; applyPaddleEvent decides paid vs failed.
+//
+// Rejects empty event ids/types and non-JSON so bad deliveries never claim.
 func parsePaddleEvent(raw []byte) (paddleEvent, error) {
 	var wire struct {
-		EventID   string `json:"event_id"`
-		EventType string `json:"event_type"`
-		Data      struct {
+		EventID        string `json:"event_id"`
+		NotificationID string `json:"notification_id"`
+		EventType      string `json:"event_type"`
+		Data           struct {
 			ID            string `json:"id"`
 			TransactionID string `json:"transaction_id"`
 			Status        string `json:"status"`
 			CustomData    struct {
 				PaymentID string `json:"payment_id"`
 			} `json:"custom_data"`
+			CustomDataCamel struct {
+				PaymentID string `json:"payment_id"`
+			} `json:"customData"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return paddleEvent{}, fmt.Errorf("invalid webhook JSON: %w", err)
 	}
-	if wire.EventID == "" || wire.EventType == "" {
+	eventID := wire.EventID
+	if eventID == "" {
+		eventID = wire.NotificationID
+	}
+	if eventID == "" || wire.EventType == "" {
 		return paddleEvent{}, fmt.Errorf("webhook needs event_id and event_type")
 	}
 	txn := wire.Data.ID
 	if txn == "" {
 		txn = wire.Data.TransactionID
 	}
+	paymentID := wire.Data.CustomData.PaymentID
+	if paymentID == "" {
+		paymentID = wire.Data.CustomDataCamel.PaymentID
+	}
 	return paddleEvent{
-		EventID:   wire.EventID,
+		EventID:   eventID,
 		EventType: wire.EventType,
-		Data:      paddleData{TxnID: txn, Status: wire.Data.Status, PaymentID: wire.Data.CustomData.PaymentID},
+		Data:      paddleData{TxnID: txn, Status: wire.Data.Status, PaymentID: paymentID},
 	}, nil
 }
 
 // claimWebhookEventSQL inserts the delivery row, or claims nothing when the
-// event_id was already seen (the dedupe that makes retries safe).
+// event_id was already seen (the dedupe that makes retries safe). The
+// payload casts to jsonb explicitly: pgx sends the raw body as typed text
+// and Postgres has no text→jsonb assignment cast, so without $4::jsonb every
+// live webhook fails at claim (caught live 2026-11-03; unit fakes never saw it).
 const claimWebhookEventSQL = `
 INSERT INTO webhook_events(provider,event_id,event_type,payload)
-VALUES($1,$2,$3,$4)
+VALUES($1,$2,$3,$4::jsonb)
 ON CONFLICT (event_id) DO NOTHING
 RETURNING id`
 
@@ -185,14 +207,33 @@ type paymentRow struct {
 	Status      string
 	PaddleTxnID *string
 	CreatedAt   time.Time
+	// Charge* locks the FX quote at checkout (NULL = same-currency charge):
+	// Paddle charged ChargeAmountMinor ChargeCurrency (e.g. USD) while the
+	// wallet/order is credited AmountMinor Currency (e.g. IDR) in full.
+	ChargeCurrency    *string
+	ChargeAmountMinor *int64
+	FxRate            *float64
 }
 
-const paymentCols = `id, user_id, kind, order_id, amount_minor, currency, status, paddle_txn_id, created_at`
+const paymentCols = `id, user_id, kind, order_id, amount_minor, currency, status, paddle_txn_id, created_at, charge_currency, charge_amount_minor, fx_rate`
 
 func scanPayment(r pgx.Row) (paymentRow, error) {
 	var p paymentRow
-	err := r.Scan(&p.ID, &p.UserID, &p.Kind, &p.OrderID, &p.AmountMinor, &p.Currency, &p.Status, &p.PaddleTxnID, &p.CreatedAt)
+	err := r.Scan(&p.ID, &p.UserID, &p.Kind, &p.OrderID, &p.AmountMinor, &p.Currency, &p.Status, &p.PaddleTxnID, &p.CreatedAt,
+		&p.ChargeCurrency, &p.ChargeAmountMinor, &p.FxRate)
 	return p, err
+}
+
+// fxQuote reports whether this payment converts currency at apply time.
+func (p paymentRow) fxQuote() (chargeMinor int64, chargeCur string, ok bool) {
+	if p.ChargeCurrency == nil || p.ChargeAmountMinor == nil {
+		return 0, "", false
+	}
+	chargeCur = strings.ToUpper(strings.TrimSpace(*p.ChargeCurrency))
+	if chargeCur == "" || chargeCur == p.Currency || *p.ChargeAmountMinor <= 0 {
+		return 0, "", false
+	}
+	return *p.ChargeAmountMinor, chargeCur, true
 }
 
 // paymentView shapes a payment; the sandbox note tells the demo PWA how to
@@ -205,6 +246,16 @@ func paymentView(p paymentRow) map[string]any {
 	}
 	if p.OrderID != nil {
 		v["order_id"] = *p.OrderID
+	}
+	if chargeMinor, chargeCur, ok := p.fxQuote(); ok {
+		q := map[string]any{
+			"charge_amount": money(chargeMinor, chargeCur),
+			"note":          "Paddle charges in " + chargeCur + "; your " + p.Currency + " balance is credited in full.",
+		}
+		if p.FxRate != nil {
+			q["fx_rate"] = *p.FxRate
+		}
+		v["fx_quote"] = q
 	}
 	if p.Status == "pending" {
 		v["sandbox_note"] = "Paddle sandbox: pay with the card overlay, or confirm instantly in demo mode."
@@ -259,7 +310,8 @@ func insertPayment(ctx context.Context, q claimer, userID, kind string, orderID 
 	err := q.QueryRow(ctx, `INSERT INTO payments(user_id,kind,order_id,amount_minor,currency,idempotency_key)
 		VALUES($1,$2,$3,$4,$5,$6) RETURNING `+paymentCols,
 		userID, kind, orderID, amount, currency, sqlNullIfEmpty(idemKey)).Scan(
-		&p.ID, &p.UserID, &p.Kind, &p.OrderID, &p.AmountMinor, &p.Currency, &p.Status, &p.PaddleTxnID, &p.CreatedAt)
+		&p.ID, &p.UserID, &p.Kind, &p.OrderID, &p.AmountMinor, &p.Currency, &p.Status, &p.PaddleTxnID, &p.CreatedAt,
+		&p.ChargeCurrency, &p.ChargeAmountMinor, &p.FxRate)
 	return p, err
 }
 
@@ -307,11 +359,19 @@ func (s *Server) createTopup(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
-// listTopups returns the caller's top-up history (newest first).
+// listTopups returns the caller's top-up history (newest first) with scroll
+// pagination (?page=, ?per_page= default 10).
 func (s *Server) listTopups(w http.ResponseWriter, r *http.Request) {
 	c := claims(r)
+	pg := parsePagination(r.URL.Query())
+	var total int
+	if err := s.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM payments
+		WHERE user_id=$1 AND kind='topup'`, c.Sub).Scan(&total); err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
 	rows, err := s.db.Query(r.Context(), `SELECT `+paymentCols+` FROM payments
-		WHERE user_id=$1 AND kind='topup' ORDER BY created_at DESC LIMIT 50`, c.Sub)
+		WHERE user_id=$1 AND kind='topup' ORDER BY created_at DESC LIMIT $2 OFFSET $3`, c.Sub, pg.limit, pg.offset)
 	if err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
@@ -325,7 +385,7 @@ func (s *Server) listTopups(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, paymentView(p))
 	}
-	writeJSON(w, 200, map[string]any{"topups": out})
+	writePaginatedList(w, "topups", out, pg.page, pg.perPage, total)
 }
 
 // getWallet returns the caller's per-currency wallet balances (one wallet
@@ -381,6 +441,9 @@ func (s *Server) paddleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	dup, err := s.handlePaddleEventTx(r.Context(), ev, string(raw))
 	if err != nil {
+		// Log the real cause: the 500 body stays generic so Paddle's
+		// retries (which we log server-side) never leak internals.
+		s.log.Error("paddle webhook apply failed", "event_id", ev.EventID, "event_type", ev.EventType, "err", err)
 		problem(w, 500, "Server error", "webhook apply failed; Paddle will retry")
 		return
 	}
@@ -407,6 +470,11 @@ func (s *Server) handlePaddleEventTx(ctx context.Context, ev paddleEvent, raw st
 	if _, err := tx.Exec(ctx, `UPDATE webhook_events SET status=$2, error=$3,
 		processed_at=CASE WHEN $2 IN ('processed','ignored') THEN now() ELSE NULL END
 		WHERE provider=$1 AND event_id=$4`, paddleProvider, status, errStr(applyErr), ev.EventID); err != nil {
+		// A failed apply aborts the tx, so this UPDATE fails too with a
+		// generic "transaction is aborted" — return the original cause.
+		if applyErr != nil {
+			return false, applyErr
+		}
 		return false, err
 	}
 	if applyErr != nil {
@@ -429,14 +497,34 @@ func errStr(err error) string {
 
 // applyPaddleEvent routes one claimed event to the shared top-up/card apply.
 // Unknown types and payments are recorded as ignored, never retried blindly.
+// The real dashboard also sends transaction.updated (with data.status
+// completed/paid/failed/canceled) and transaction.paid: completed/paid pay
+// once through the same idempotent path, terminal failures fail.
 func (s *Server) applyPaddleEvent(ctx context.Context, tx pgx.Tx, ev paddleEvent) (string, error) {
 	switch ev.EventType {
-	case "transaction.completed":
+	case "transaction.completed", "transaction.paid":
 		if ev.Data.PaymentID == "" {
 			return "ignored", nil
 		}
 		return "processed", s.completePaddlePayment(ctx, tx, ev.Data.PaymentID, ev.Data.TxnID)
-	case "transaction.failed", "transaction.canceled", "transaction.cancelled":
+	case "transaction.updated":
+		if ev.Data.PaymentID == "" {
+			return "ignored", nil
+		}
+		switch strings.ToLower(strings.TrimSpace(ev.Data.Status)) {
+		case "completed", "paid", "billed", "ready":
+			// ready/billed mean authorized-but-capturing on some flows; only
+			// completed/paid move money. ready is intentionally ignored below.
+			if strings.ToLower(strings.TrimSpace(ev.Data.Status)) == "ready" {
+				return "ignored", nil
+			}
+			return "processed", s.completePaddlePayment(ctx, tx, ev.Data.PaymentID, ev.Data.TxnID)
+		case "failed", "canceled", "cancelled", "past_due":
+			return "processed", s.failPaddlePayment(ctx, tx, ev.Data.PaymentID, ev.Data.TxnID)
+		default:
+			return "ignored", nil
+		}
+	case "transaction.failed", "transaction.canceled", "transaction.cancelled", "transaction.payment_failed":
 		if ev.Data.PaymentID == "" {
 			return "ignored", nil
 		}
@@ -452,7 +540,8 @@ func (s *Server) applyPaddleEvent(ctx context.Context, tx pgx.Tx, ev paddleEvent
 // ledger post carries a deterministic key, so retries pay once.
 func (s *Server) completePaddlePayment(ctx context.Context, tx pgx.Tx, paymentID, txnID string) error {
 	var p paymentRow
-	dst := []any{&p.ID, &p.UserID, &p.Kind, &p.OrderID, &p.AmountMinor, &p.Currency, &p.Status, &p.PaddleTxnID, &p.CreatedAt}
+	dst := []any{&p.ID, &p.UserID, &p.Kind, &p.OrderID, &p.AmountMinor, &p.Currency, &p.Status, &p.PaddleTxnID, &p.CreatedAt,
+		&p.ChargeCurrency, &p.ChargeAmountMinor, &p.FxRate}
 	if err := tx.QueryRow(ctx, `SELECT `+paymentCols+` FROM payments WHERE id=$1 FOR UPDATE`, paymentID).Scan(dst...); err != nil {
 		return fmt.Errorf("payment not found: %s", paymentID)
 	}
@@ -466,19 +555,28 @@ func (s *Server) completePaddlePayment(ctx context.Context, tx pgx.Tx, paymentID
 		return err
 	}
 	if p.Kind == "topup" {
+		// FX-converted charge (e.g. IDR wallet, USD charged): the customer
+		// receives the full credited amount; fx_position bridges the two
+		// currencies so each side still nets to zero.
+		if chargeMinor, chargeCur, ok := p.fxQuote(); ok {
+			return postEntry(ctx, tx, "wallet_topup_fx", ledger.TopupKey(p.UserID, p.ID), "payment", p.ID,
+				ledger.FxTopupPostings(chargeMinor, chargeCur, p.AmountMinor, p.Currency, p.UserID))
+		}
 		return postEntry(ctx, tx, "wallet_topup", ledger.TopupKey(p.UserID, p.ID), "payment", p.ID,
 			ledger.TopupPostings(p.AmountMinor, p.Currency, p.UserID))
 	}
 	if p.OrderID == nil {
 		return fmt.Errorf("card payment %s has no order", paymentID)
 	}
-	return s.placeCardOrderTx(ctx, tx, *p.OrderID)
+	chargeMinor, chargeCur, _ := p.fxQuote()
+	return s.placeCardOrderTx(ctx, tx, *p.OrderID, chargeMinor, chargeCur)
 }
 
 // placeCardOrderTx moves a card order from awaiting_payment to placed: the
 // guarded update is the single decider, then the order event, the card
-// charge into escrow, and the merchant-accept timeout are queued in-tx.
-func (s *Server) placeCardOrderTx(ctx context.Context, tx pgx.Tx, orderID string) error {
+// charge into escrow (FX-converted when chargeCur is set), and the
+// merchant-accept timeout are queued in-tx.
+func (s *Server) placeCardOrderTx(ctx context.Context, tx pgx.Tx, orderID string, chargeMinor int64, chargeCur string) error {
 	var customerID, merchantID string
 	err := tx.QueryRow(ctx, `UPDATE orders SET status='placed', payment_status='held',
 		placed_at=now(), updated_at=now() WHERE id=$1 AND status='awaiting_payment'
@@ -497,12 +595,15 @@ func (s *Server) placeCardOrderTx(ctx context.Context, tx pgx.Tx, orderID string
 	if err != nil {
 		return err
 	}
-	if err := postEntry(ctx, tx, "order_card_charge", ledger.CardChargeKey(orderID), "order", orderID,
-		ledger.CardChargePostings(o.quote(), orderID)); err != nil {
+	legs := ledger.CardChargePostings(o.quote(), orderID)
+	if chargeMinor > 0 && chargeCur != "" && chargeCur != o.quote().Currency {
+		legs = ledger.FxCardChargePostings(chargeMinor, chargeCur, o.quote(), orderID)
+	}
+	if err := postEntry(ctx, tx, "order_card_charge", ledger.CardChargeKey(orderID), "order", orderID, legs); err != nil {
 		return err
 	}
-	return enqueueTx(ctx, tx, "merchant_accept_timeout", fmt.Sprintf(`{"order_id":%q}`, orderID),
-		time.Now().Add(time.Duration(s.cfg.Order.MerchantAcceptWindowS)*time.Second))
+	return s.enqueueTx(ctx, tx, "merchant_accept_timeout", fmt.Sprintf(`{"order_id":%q}`, orderID),
+		time.Now().Add(time.Duration(s.effectiveAcceptWindow(ctx, s.merchantCountryForOrder(ctx, orderID)))*time.Second))
 }
 
 // failPaddlePayment records a failed/cancelled Paddle transaction: the
@@ -510,7 +611,8 @@ func (s *Server) placeCardOrderTx(ctx context.Context, tx pgx.Tx, orderID string
 // ever moved, so no ledger post).
 func (s *Server) failPaddlePayment(ctx context.Context, tx pgx.Tx, paymentID, txnID string) error {
 	var p paymentRow
-	dst := []any{&p.ID, &p.UserID, &p.Kind, &p.OrderID, &p.AmountMinor, &p.Currency, &p.Status, &p.PaddleTxnID, &p.CreatedAt}
+	dst := []any{&p.ID, &p.UserID, &p.Kind, &p.OrderID, &p.AmountMinor, &p.Currency, &p.Status, &p.PaddleTxnID, &p.CreatedAt,
+		&p.ChargeCurrency, &p.ChargeAmountMinor, &p.FxRate}
 	if err := tx.QueryRow(ctx, `SELECT `+paymentCols+` FROM payments WHERE id=$1 FOR UPDATE`, paymentID).Scan(dst...); err != nil {
 		return fmt.Errorf("payment not found: %s", paymentID)
 	}
@@ -741,7 +843,7 @@ func (s *Server) createWithdrawal(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "Server error", err.Error())
 		return
 	}
-	if err := enqueueTx(r.Context(), tx, "payout_process", fmt.Sprintf(`{"withdrawal_id":%q}`, wd.ID), time.Now()); err != nil {
+	if err := s.enqueueTx(r.Context(), tx, "payout_process", fmt.Sprintf(`{"withdrawal_id":%q}`, wd.ID), time.Now()); err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
 	}
@@ -756,11 +858,19 @@ func (s *Server) createWithdrawal(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
-// listWithdrawals returns the caller's payout history (newest first).
+// listWithdrawals returns the caller's payout history (newest first) with
+// scroll pagination (?page=, ?per_page= default 10).
 func (s *Server) listWithdrawals(w http.ResponseWriter, r *http.Request) {
 	c := claims(r)
+	pg := parsePagination(r.URL.Query())
+	var total int
+	if err := s.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM withdrawals
+		WHERE courier_id=$1`, c.Sub).Scan(&total); err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
 	rows, err := s.db.Query(r.Context(), `SELECT `+withdrawalCols+` FROM withdrawals
-		WHERE courier_id=$1 ORDER BY created_at DESC LIMIT 50`, c.Sub)
+		WHERE courier_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, c.Sub, pg.limit, pg.offset)
 	if err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
@@ -774,7 +884,7 @@ func (s *Server) listWithdrawals(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, withdrawalView(wd))
 	}
-	writeJSON(w, 200, map[string]any{"withdrawals": out})
+	writePaginatedList(w, "withdrawals", out, pg.page, pg.perPage, total)
 }
 
 // getEarnings returns the courier's per-currency earnings: the ledger
@@ -816,17 +926,54 @@ func (s *Server) getEarnings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"earnings": out})
 }
 
-// listDeliveryHistory feeds the courier profile card: past delivered orders
-// with payout, measured workout, and the stars received.
+// listDeliveryHistory feeds the courier Orders page: past delivered AND
+// cancelled legs with payout, measured workout, and the stars received.
+// Scroll-paginated (?page=, ?per_page= default 10) so the list and the
+// Ratings page aggregate page by page instead of loading the whole career
+// at once. Optional ?status=delivered|cancelled filters the terminal state
+// (empty/all = both), and ?q= matches the order code or merchant name.
 func (s *Server) listDeliveryHistory(w http.ResponseWriter, r *http.Request) {
 	c := claims(r)
-	rows, err := s.db.Query(r.Context(), `SELECT d.id, d.type, o.code, o.currency,
+	pg := parsePagination(r.URL.Query())
+	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	if status == "" {
+		status = "all"
+	}
+	if status != "all" && status != "delivered" && status != "cancelled" {
+		problem(w, 400, "Validation failed", "status must be delivered, cancelled or all")
+		return
+	}
+	pattern, filtered, errMsg := parseSearch(r.URL.Query().Get("q"))
+	if errMsg != "" {
+		problem(w, 400, "Validation failed", errMsg)
+		return
+	}
+	where := `WHERE d.courier_id=$1 AND d.status IN ('delivered','cancelled')`
+	args := []any{c.Sub}
+	if status != "all" {
+		args = append(args, status)
+		where += ` AND d.status=$` + strconv.Itoa(len(args))
+	}
+	if filtered {
+		args = append(args, pattern)
+		where += ` AND (o.code ILIKE $` + strconv.Itoa(len(args)) + ` ESCAPE '\' OR m.name ILIKE $` + strconv.Itoa(len(args)) + ` ESCAPE '\')`
+	}
+	var total int
+	if err := s.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM deliveries d
+		JOIN orders o ON o.id=d.order_id JOIN merchants m ON m.id=o.merchant_id `+where, args...).Scan(&total); err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	qargs := append(append([]any{}, args...), pg.limit, pg.offset)
+	rows, err := s.db.Query(r.Context(), `SELECT d.id, d.type, d.status, o.code, o.currency,
 		o.delivery_fee_minor, o.courier_fee_minor, o.tip_minor, m.name,
-		d.carried_distance_m, d.carried_active_s, d.delivered_at, r.courier_stars
+		d.carried_distance_m, d.carried_active_s, d.delivered_at, d.created_at, d.cancel_note,
+		r.courier_stars,
+		COALESCE(r.courier_tags, '[]'::jsonb)
 		FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN merchants m ON m.id=o.merchant_id
 		LEFT JOIN order_ratings r ON r.order_id=o.id
-		WHERE d.courier_id=$1 AND d.status='delivered'
-		ORDER BY d.delivered_at DESC LIMIT 50`, c.Sub)
+		`+where+`
+		ORDER BY COALESCE(d.delivered_at, d.created_at) DESC LIMIT $`+strconv.Itoa(len(qargs)-1)+` OFFSET $`+strconv.Itoa(len(qargs)), qargs...)
 	if err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
@@ -834,30 +981,53 @@ func (s *Server) listDeliveryHistory(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
-		var id, typ, code, cur, name string
+		var id, typ, st, code, cur, name string
 		var deliveryFee, courierFee, tip int64
 		var dist float64
 		var active int64
 		var at *time.Time
+		var created time.Time
+		var cancelNote string
 		var stars *int
-		if err := rows.Scan(&id, &typ, &code, &cur, &deliveryFee, &courierFee, &tip,
-			&name, &dist, &active, &at, &stars); err != nil {
+		var tagsB []byte
+		if err := rows.Scan(&id, &typ, &st, &code, &cur, &deliveryFee, &courierFee, &tip,
+			&name, &dist, &active, &at, &created, &cancelNote, &stars, &tagsB); err != nil {
 			continue
 		}
+		// Cancelled legs never settle: the payout stays zero, never a
+		// negative leftover from the stored quote.
+		var payout int64
+		if st == "delivered" {
+			payout = deliveryFee - courierFee + tip
+		}
 		item := map[string]any{
-			"delivery_id": id, "type": typ, "order_code": code,
-			"payout":        money(deliveryFee-courierFee+tip, cur),
+			"delivery_id": id, "type": typ, "status": st, "order_code": code,
+			"payout":        money(payout, cur),
 			"merchant_name": name, "distance_m": dist, "active_s": active,
+			"created_at": created.UTC().Format(time.RFC3339),
 		}
 		if at != nil {
 			item["delivered_at"] = at.UTC().Format(time.RFC3339)
 		}
+		if st == "cancelled" && strings.TrimSpace(cancelNote) != "" {
+			item["cancel_note"] = cancelNote
+		}
 		if stars != nil {
 			item["courier_stars"] = *stars
 		}
+		// Customer tag labels (courier-blaming topics stay in the AI support
+		// queue, never here): the Ratings page aggregates these per tag.
+		var tags []string
+		if len(tagsB) > 0 {
+			_ = json.Unmarshal(tagsB, &tags)
+		}
+		if tags == nil {
+			tags = []string{}
+		}
+		item["courier_tags"] = tags
 		out = append(out, item)
 	}
-	writeJSON(w, 200, map[string]any{"deliveries": out})
+	writePaginatedList(w, "deliveries", out, pg.page, pg.perPage, total)
 }
 
 // ---------- mock payout provider + worker ----------
@@ -961,20 +1131,31 @@ func (s *Server) processWithdrawal(ctx context.Context, withdrawalID string, pro
 // ---------- admin: withdrawals monitor + hold/release ----------
 
 // listAdminWithdrawals serves the finance review queue, optionally filtered
-// by status.
+// by status, with scroll pagination (?page=, ?per_page= default 10, legacy
+// ?limit= alias).
 func (s *Server) listAdminWithdrawals(w http.ResponseWriter, r *http.Request) {
 	if !requireRole(w, r, "admin") {
 		return
 	}
+	pg := parsePagination(r.URL.Query())
 	status := r.URL.Query().Get("status")
 	q := `SELECT ` + withdrawalCols + ` FROM withdrawals`
+	countQ := `SELECT COUNT(*) FROM withdrawals`
 	args := []any{}
 	if status != "" {
 		q += ` WHERE status=$1`
+		countQ += ` WHERE status=$1`
 		args = append(args, status)
 	}
-	q += ` ORDER BY created_at DESC LIMIT 100`
-	rows, err := s.db.Query(r.Context(), q, args...)
+	var total int
+	if err := s.db.QueryRow(r.Context(), countQ, args...).Scan(&total); err != nil {
+		problem(w, 500, "Server error", err.Error())
+		return
+	}
+	pargs := append(append([]any{}, args...), pg.limit, pg.offset)
+	ph := len(pargs)
+	q += ` ORDER BY created_at DESC LIMIT $` + strconv.Itoa(ph-1) + ` OFFSET $` + strconv.Itoa(ph)
+	rows, err := s.db.Query(r.Context(), q, pargs...)
 	if err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
@@ -990,7 +1171,7 @@ func (s *Server) listAdminWithdrawals(w http.ResponseWriter, r *http.Request) {
 		v["courier_id"] = wd.CourierID
 		out = append(out, v)
 	}
-	writeJSON(w, 200, map[string]any{"withdrawals": out})
+	writePaginatedList(w, "withdrawals", out, pg.page, pg.perPage, total)
 }
 
 // holdWithdrawal freezes a payout for review: a pending one simply waits,
@@ -1044,6 +1225,8 @@ func (s *Server) holdWithdrawal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.queuePush(wd.CourierID, "Withdrawal on hold", "Support is reviewing your withdrawal.")
+	s.writeAudit(r.Context(), r, "withdrawal.hold", "withdrawal", wd.ID, strings.TrimSpace(b.Reason),
+		map[string]any{"status": wd.Status}, map[string]any{"status": "held"})
 	writeJSON(w, 200, map[string]any{"withdrawal": withdrawalView(withdrawalRow{
 		ID: wd.ID, CourierID: wd.CourierID, AmountMinor: wd.AmountMinor, Currency: wd.Currency,
 		Status: "held", HoldReason: strings.TrimSpace(b.Reason), CreatedAt: wd.CreatedAt,
@@ -1068,7 +1251,7 @@ func (s *Server) releaseWithdrawal(w http.ResponseWriter, r *http.Request) {
 		problem(w, 409, "Conflict", "only a held withdrawal can be released")
 		return
 	}
-	if err := enqueueTx(r.Context(), tx, "payout_process", fmt.Sprintf(`{"withdrawal_id":%q}`, r.PathValue("id")), time.Now()); err != nil {
+	if err := s.enqueueTx(r.Context(), tx, "payout_process", fmt.Sprintf(`{"withdrawal_id":%q}`, r.PathValue("id")), time.Now()); err != nil {
 		problem(w, 500, "Server error", err.Error())
 		return
 	}
@@ -1077,5 +1260,7 @@ func (s *Server) releaseWithdrawal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.queuePush(courierID, "Withdrawal released", "Your withdrawal is back in the payout queue.")
+	s.writeAudit(r.Context(), r, "withdrawal.release", "withdrawal", r.PathValue("id"), "",
+		map[string]any{"status": "held"}, map[string]any{"status": "pending"})
 	writeJSON(w, 200, map[string]any{"released": true})
 }

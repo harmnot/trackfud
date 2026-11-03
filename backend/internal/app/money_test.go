@@ -64,7 +64,7 @@ func TestClaimWebhookEvent(t *testing.T) {
 	if err != nil || !claimed {
 		t.Fatalf("first delivery must claim, got claimed=%v err=%v", claimed, err)
 	}
-	for _, want := range []string{"webhook_events", "ON CONFLICT (event_id) DO NOTHING", "RETURNING id"} {
+	for _, want := range []string{"webhook_events", "ON CONFLICT (event_id) DO NOTHING", "RETURNING id", "$4::jsonb"} {
 		if !strings.Contains(first.gotSQL, want) {
 			t.Fatalf("claim SQL must contain %q", want)
 		}
@@ -94,6 +94,16 @@ func TestParsePaddleEvent(t *testing.T) {
 	ev2, err := parsePaddleEvent(raw2)
 	if err != nil || ev2.Data.TxnID != "txn_x" {
 		t.Fatalf("transaction_id alias must parse: %+v %v", ev2, err)
+	}
+	// notification_id + camelCase customData from the real dashboard.
+	raw3 := []byte(`{"notification_id":"evt-live-1","event_type":"transaction.updated",
+		"data":{"id":"txn_live","status":"paid","customData":{"payment_id":"pay-live"}}}`)
+	ev3, err := parsePaddleEvent(raw3)
+	if err != nil {
+		t.Fatalf("live dashboard shape must parse: %v", err)
+	}
+	if ev3.EventID != "evt-live-1" || ev3.Data.TxnID != "txn_live" || ev3.Data.PaymentID != "pay-live" || ev3.Data.Status != "paid" {
+		t.Fatalf("unexpected live parse: %+v", ev3)
 	}
 	for _, bad := range []string{`not json`, `{}`, `{"event_id":"e"}`, `{"event_type":"t"}`} {
 		if _, err := parsePaddleEvent([]byte(bad)); err == nil {
@@ -235,6 +245,29 @@ func TestValidCurrency(t *testing.T) {
 	for _, bad := range []string{"", "US", "USDD", "usd", "12X", "U D"} {
 		if validCurrency(bad) {
 			t.Fatalf("%q must be invalid", bad)
+		}
+	}
+}
+
+// fxQuote: only a locked cross-currency quote converts at apply time.
+func TestFxQuote(t *testing.T) {
+	usd := "USD"
+	idrMinor := int64(100000)
+	usdMinor := int64(617)
+	rate := 6.1728e-05
+	fx := paymentRow{Currency: "IDR", AmountMinor: idrMinor, ChargeCurrency: &usd, ChargeAmountMinor: &usdMinor, FxRate: &rate}
+	minor, cur, ok := fx.fxQuote()
+	if !ok || minor != usdMinor || cur != "USD" {
+		t.Fatalf("locked IDR->USD quote must convert, got %d %q %v", minor, cur, ok)
+	}
+	for _, p := range []paymentRow{
+		{},                                  // same-currency charge: no quote cols
+		{Currency: "USD", AmountMinor: 100}, // plain USD top-up
+		{Currency: "IDR", AmountMinor: idrMinor, ChargeCurrency: &usd},                          // partial quote: no amount
+		{Currency: "USD", AmountMinor: 100, ChargeCurrency: &usd, ChargeAmountMinor: &usdMinor}, // same currency
+	} {
+		if _, _, ok := p.fxQuote(); ok {
+			t.Fatalf("must not convert: %+v", p)
 		}
 	}
 }

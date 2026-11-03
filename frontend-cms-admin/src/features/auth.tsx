@@ -4,7 +4,7 @@ import { Navigate, useNavigate } from 'react-router';
 import { api, isAdmin, setSession } from '../lib/api';
 import type { User } from '../lib/api';
 import { logger } from '../lib/logger';
-import { Button, Field, Note, Page } from '../components/ui';
+import { Button, Note, Page, TextInput } from '../components/ui';
 
 /** Email + password rules shared with the backend (auth.go: valid email, min 8 chars). */
 export function validateLogin(email: string, password: string): string | null {
@@ -38,12 +38,15 @@ export function LoginPage({ user, onLogin }: { user: User | null; onLogin: (u: U
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
       });
-      setSession({ accessToken: d.access_token, user: d.user });
-      onLogin(d.user);
+      // Platform isolation: never keep a non-admin session in the CMS, even
+      // when an old token was issued before the backend 403 gate.
       if (!isAdmin(d.user)) {
-        setErr('This account is not an admin. Partner review needs an admin role.');
+        setSession(null);
+        setErr('This account cannot sign in on the admin (CMS) platform. Use your own platform instead.');
         return;
       }
+      setSession({ accessToken: d.access_token, user: d.user });
+      onLogin(d.user);
       nav('/');
     } catch (e2) {
       logger.warn('admin login failed', {});
@@ -55,37 +58,37 @@ export function LoginPage({ user, onLogin }: { user: User | null; onLogin: (u: U
 
   return (
     <Page>
-      <h1 className="tb-display">Back Office</h1>
-      <p className="tb-sub">Admin sign in. Review couriers and merchants, approve or reject partnerships.</p>
-      <form className="flex flex-col gap-3 mt-4" onSubmit={(e) => void submit(e)} noValidate>
-        <Field label="Email">
-          <input
-            className="tb-input"
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="admin@example.com"
-          />
-        </Field>
-        <Field label="Password">
-          <input
-            className="tb-input"
-            type="password"
-            autoComplete="current-password"
-            required
-            minLength={8}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-          />
-        </Field>
-        {err && <Note tone="error">{err}</Note>}
-        <Button type="submit" block disabled={busy}>
-          {busy ? '…' : 'Sign in'}
-        </Button>
-      </form>
+      <div className="tb-auth">
+        <h1 className="tb-display">Back Office</h1>
+        <p className="tb-sub">Admin sign in. Review couriers and merchants, approve or reject partnerships.</p>
+        <div className="tb-card mt-4">
+          <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)} noValidate>
+            <TextInput
+              label="Email"
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(v) => setEmail(v)}
+              placeholder="admin@example.com"
+            />
+            <TextInput
+              label="Password"
+              type="password"
+              autoComplete="current-password"
+              required
+              minLength={8}
+              value={password}
+              onChange={(v) => setPassword(v)}
+              placeholder="••••••••"
+            />
+            {err && <Note tone="error">{err}</Note>}
+            <Button type="submit" block disabled={busy}>
+              {busy ? '…' : 'Sign in'}
+            </Button>
+          </form>
+        </div>
+      </div>
     </Page>
   );
 }

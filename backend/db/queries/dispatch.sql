@@ -2,7 +2,7 @@
 -- Plan: AGENTS.md section 6. Coordinates stay in PostGIS; Go sees meters.
 -- name: DispatchCandidates :many
 WITH o AS (
-  SELECT o.id, o.dropoff, o.size_class, o.spill_risk, m.location AS pickup
+  SELECT o.id, o.dropoff, o.size_class, m.location AS pickup
   FROM orders o JOIN merchants m ON m.id = o.merchant_id
   WHERE o.id = $1
 )
@@ -29,15 +29,13 @@ WHERE s.kind = 'work' AND s.status = 'active'
       AND ST_DWithin(s.last_pos, o.pickup, $3)
       AND ST_DWithin(o.pickup, o.dropoff, $4)
       AND o.size_class = ANY(string_to_array($5, ','))
-      AND o.spill_risk = ANY(string_to_array($6, ','))
-      AND (s.planned_track IS NULL OR ST_DWithin(s.planned_track, o.pickup, $7)))
+      AND (s.planned_track IS NULL OR ST_DWithin(s.planned_track, o.pickup, $6)))
     OR
     (c.mode = 'biker'
-      AND ST_DWithin(s.last_pos, o.pickup, $8)
-      AND ST_DWithin(o.pickup, o.dropoff, $9)
-      AND o.size_class = ANY(string_to_array($10, ','))
-      AND o.spill_risk = ANY(string_to_array($11, ','))
-      AND (s.planned_track IS NULL OR ST_DWithin(s.planned_track, o.pickup, $12)))
+      AND ST_DWithin(s.last_pos, o.pickup, $7)
+      AND ST_DWithin(o.pickup, o.dropoff, $8)
+      AND o.size_class = ANY(string_to_array($9, ','))
+      AND (s.planned_track IS NULL OR ST_DWithin(s.planned_track, o.pickup, $10)))
   )
 ORDER BY to_pickup_m
 LIMIT 20;

@@ -5,7 +5,7 @@
  * the parser works on desktop and on phones without recognizer support.
  */
 import { useState } from 'react';
-import { Button, Note } from './ui';
+import { Button, Note, TextInput } from './ui';
 import { VOICE_HINTS } from '../features/voice/voiceCommands';
 import { VOICE_BACKEND } from '../features/voice/useVoiceCopilot';
 
@@ -70,13 +70,14 @@ export function VoicePanel(props: Props): React.JSX.Element {
           }
         }}
       >
-        <input
-          className="tb-input flex-1"
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          placeholder={props.labels.typedPlaceholder}
-          aria-label={props.labels.typedPlaceholder}
-        />
+        <div className="flex-1">
+          <TextInput
+            value={typed}
+            onChange={setTyped}
+            placeholder={props.labels.typedPlaceholder}
+            aria-label={props.labels.typedPlaceholder}
+          />
+        </div>
         <Button type="submit" variant="soft">{props.labels.send}</Button>
       </form>
       <div className="mt-2">

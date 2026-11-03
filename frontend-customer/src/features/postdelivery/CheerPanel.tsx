@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ApiError } from '../../lib/api';
-import { Button, Note, Skeleton } from '../../components/ui';
+import { Button, Note, Skeleton, TextInput } from '../../components/ui';
 import { useCheers, useSendCheer } from './hooks';
 import { CHEER_IDS, type CheerId } from './types';
 
@@ -50,15 +50,15 @@ export function CheerPanel(args: { orderId: string }) {
           if (custom.trim().length > 0) void cheer(null, custom.trim());
         }}
       >
-        <label className="flex-1" aria-label={t('cheer.customPh')}>
-          <input
-            className="tb-input"
+        <div className="flex-1">
+          <TextInput
             value={custom}
             maxLength={140}
-            onChange={(e) => setCustom(e.target.value)}
+            onChange={setCustom}
             placeholder={t('cheer.customPh')}
+            aria-label={t('cheer.customPh')}
           />
-        </label>
+        </div>
         <Button type="submit" variant="soft" disabled={custom.trim().length === 0 || send.isPending}>
           {t('cheer.send')}
         </Button>
