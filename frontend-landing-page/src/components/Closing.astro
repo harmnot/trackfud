@@ -1,0 +1,148 @@
+---
+import { stories, faqs } from '../data/content';
+import PhoneMock from './PhoneMock.astro';
+---
+
+<section class="section stories-section" aria-labelledby="stories-title">
+  <div class="wrap">
+    <div class="section-head" data-reveal>
+      <h2 id="stories-title">The same street, <em>four mornings.</em></h2>
+      <p>A delivery on Trackfud is never just a delivery. It is the last stretch of someone's workout, a kitchen's busiest hour, and lunch arriving on time.</p>
+    </div>
+    <div class="stories">
+      {stories.map((s, i) => (
+        <article class="story" data-reveal style={`--d:${i % 2}`}>
+          <div class="story-img"><img src={s.image} alt={s.alt} loading="lazy" /></div>
+          <p class="story-role">{s.role}</p>
+          <p class="story-caption">{s.caption}</p>
+        </article>
+      ))}
+    </div>
+  </div>
+</section>
+
+<section class="section browser-section" id="browser" aria-labelledby="browser-title">
+  <div class="wrap browser-grid">
+    <div data-reveal="left">
+      <p class="role-label">Right in your browser</p>
+      <h2 id="browser-title">No download.<br /><em>Just open, sign in, go.</em></h2>
+      <p class="lede">Trackfud lives in your browser. There is nothing to install from an app store and nothing to update — when you are ready, add it to your home screen and it opens like an app, full screen, with notifications for offers and orders.</p>
+      <ol class="browser-steps">
+        <li><strong>Open Trackfud</strong> in your phone browser.</li>
+        <li><strong>Sign in</strong> as customer, courier or merchant.</li>
+        <li><strong>Add to Home Screen</strong> from your browser menu — done.</li>
+      </ol>
+      <a class="btn btn-white" href="#get-started">Try it in your browser
+        <svg class="arr" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-6-6 6 6-6 6" /></svg>
+      </a>
+    </div>
+    <div class="browser-visual" data-reveal="right">
+      <PhoneMock variant="courier" />
+      <div class="install-card">
+        <span class="install-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11m0 0 4-4m-4 4-4-4" /><path d="M4 17v3h16v-3" /></svg>
+        </span>
+        <span><strong>Add Trackfud to Home Screen?</strong><small>No download · under a second</small></span>
+        <span class="install-add">Add</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section faq-section" id="faq" aria-labelledby="faq-title">
+  <div class="wrap faq-grid">
+    <div class="section-head" data-reveal>
+      <h2 id="faq-title">Questions, <em>answered.</em></h2>
+      <p>How Trackfud works for customers, couriers and merchants — and why there is no app to download.</p>
+    </div>
+    <div class="faq-list">
+      {faqs.map((f, i) => (
+        <details class="faq" data-reveal style={`--d:${Math.min(i, 3)}`} open={i === 0}>
+          <summary>{f.q}<span class="faq-plus" aria-hidden="true"></span></summary>
+          <p>{f.a}</p>
+        </details>
+      ))}
+    </div>
+  </div>
+</section>
+
+<section class="final-cta" id="get-started" aria-labelledby="cta-title">
+  <img class="cta-bg" src="/images/biker.jpg" alt="" loading="lazy" aria-hidden="true" />
+  <div class="cta-shade" aria-hidden="true"></div>
+  <div class="wrap cta-inner" data-reveal="zoom">
+    <h2 class="cta-title serif" id="cta-title">Run. <em>Ride.</em> Earn.</h2>
+    <p>Your next workout could carry someone's dinner — and pay for itself. Open Trackfud in your browser and pick your side of the street.</p>
+    <div class="hero-ctas cta-actions">
+      <a class="btn btn-white" href="#couriers">Earn on your workout</a>
+      <a class="btn btn-ghost btn-on-photo" href="#customers">Order food</a>
+      <a class="btn btn-ghost btn-on-photo" href="#merchants">Open your kitchen</a>
+    </div>
+    <p class="cta-note">Customers · Runners & bikers · Merchants — one browser page each, no download.</p>
+  </div>
+</section>
+
+<style>
+  .role-label { font-family: var(--tb-serif); font-style: italic; font-size: 1.05rem; color: var(--tb-muted); margin: 0 0 0.7rem; }
+  .stories-section { border-top: 1px solid var(--tb-soft-line); }
+  .stories { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+  .story { border: 1px solid var(--tb-soft-line); border-radius: var(--tb-r-xl); overflow: hidden; background: rgba(255,255,255,0.02); transition: transform 0.25s var(--tb-ease), border-color 0.25s; }
+  .story:hover { transform: translateY(-4px); border-color: rgba(255,255,255,0.18); }
+  .story-img { height: 210px; overflow: hidden; }
+  .story-img img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.7s var(--tb-ease); }
+  .story:hover .story-img img { transform: scale(1.06); }
+  .story-role { font-family: var(--tb-serif); font-style: italic; font-size: 1.05rem; color: var(--tb-muted); margin: 1.1rem 1.2rem 0.3rem; }
+  .story-caption { color: var(--tb-body); font-size: 0.9rem; margin: 0 1.2rem 1.3rem; }
+
+  .browser-section { border-top: 1px solid var(--tb-soft-line); background: var(--tb-bg-2); }
+  .browser-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: clamp(2rem, 6vw, 5rem); align-items: center; }
+  .browser-grid h2 { font-family: var(--tb-serif); font-weight: 500; font-size: clamp(2rem, 4.5vw, 3.1rem); line-height: 1.08; letter-spacing: -0.02em; margin: 0 0 1rem; }
+  .browser-grid h2 em { font-style: italic; color: var(--tb-muted); }
+  .browser-steps { margin: 1.5rem 0 2rem; padding-left: 1.2rem; display: grid; gap: 0.6rem; color: var(--tb-body); }
+  .browser-steps strong { color: var(--tb-ink); }
+  .browser-visual { position: relative; display: flex; justify-content: center; padding-bottom: 3rem; }
+  .install-card { position: absolute; bottom: -12px; left: 0; right: 0; margin-inline: auto; width: min(340px, calc(100% - 2rem)); display: flex; align-items: center; gap: 0.7rem; background: rgba(16,17,20,0.95); border: 1px solid rgba(255,255,255,0.16); border-radius: 18px; padding: 0.85rem 1rem; box-shadow: var(--tb-sh-card); font-size: 0.8rem; }
+  .install-card small { display: block; color: var(--tb-muted); font-size: 0.68rem; font-weight: 500; }
+  .install-icon { width: 38px; height: 38px; border-radius: 11px; background: rgba(255,255,255,0.06); border: 1px solid var(--tb-line); display: grid; place-items: center; flex-shrink: 0; }
+  .install-icon svg { width: 19px; height: 19px; }
+  .install-add { margin-left: auto; background: #fff; color: #09090b; font-weight: 800; font-size: 0.72rem; border-radius: 999px; padding: 0.45rem 0.9rem; }
+
+  .faq-section { border-top: 1px solid var(--tb-soft-line); }
+  .faq-grid { display: grid; grid-template-columns: 0.8fr 1.2fr; gap: clamp(2rem, 6vw, 5rem); align-items: start; }
+  .faq-grid .section-head { margin-bottom: 0; position: sticky; top: 6rem; }
+  .faq-list { display: grid; gap: 0.7rem; }
+  .faq { border: 1px solid var(--tb-soft-line); border-radius: var(--tb-r-lg); background: rgba(255,255,255,0.02); transition: border-color 0.25s, background 0.25s; }
+  .faq:hover, .faq[open] { border-color: rgba(255,255,255,0.16); background: rgba(255,255,255,0.035); }
+  .faq summary { cursor: pointer; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 1rem; font-weight: 700; font-size: 0.98rem; letter-spacing: -0.01em; padding: 1.1rem 1.25rem; }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary:focus-visible { outline: 2px solid #fff; outline-offset: 3px; border-radius: var(--tb-r-lg); }
+  .faq-plus { position: relative; width: 16px; height: 16px; flex-shrink: 0; }
+  .faq-plus::before, .faq-plus::after { content: ""; position: absolute; background: var(--tb-muted); left: 0; top: 7px; width: 16px; height: 2px; border-radius: 2px; transition: transform 0.3s var(--tb-ease); }
+  .faq-plus::after { transform: rotate(90deg); }
+  .faq[open] .faq-plus::after { transform: rotate(0deg); }
+  .faq p { color: var(--tb-body); font-size: 0.93rem; margin: 0; padding: 0 1.25rem 1.2rem; max-width: 36rem; }
+
+  .final-cta { position: relative; padding: clamp(5rem, 11vw, 8rem) 0; overflow: hidden; isolation: isolate; border-top: 1px solid var(--tb-soft-line); text-align: center; }
+  .cta-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: -2; opacity: 0.5; }
+  .cta-shade { position: absolute; inset: 0; z-index: -1; background: linear-gradient(0deg, rgba(6,7,9,0.96), rgba(6,7,9,0.55) 55%, rgba(6,7,9,0.82)); }
+  .cta-inner p { color: var(--tb-body); max-width: 36rem; margin: 1.2rem auto 0; }
+  .cta-title { font-size: clamp(3rem, 9vw, 5.8rem); line-height: 0.95; letter-spacing: -0.03em; margin: 0; }
+  .cta-title em { font-style: italic; color: var(--tb-muted); }
+  .cta-actions { justify-content: center; margin-top: 2.2rem; }
+  .cta-actions > a { margin-right: .75rem; }
+  .btn-on-photo { background: rgba(6,7,9,0.55); backdrop-filter: blur(8px); }
+  .cta-note { font-size: 0.82rem; color: var(--tb-muted) !important; }
+
+  @media (max-width: 1000px) { .stories { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 900px) {
+    .browser-grid, .faq-grid { grid-template-columns: 1fr; }
+    .faq-grid .section-head { position: static; }
+  }
+  @media (max-width: 560px) {
+    .stories { grid-template-columns: 1fr; }
+    .cta-actions { flex-direction: column; align-items: stretch; }
+    .cta-actions .btn { width: 100%; }
+    .cta-actions > a { margin-bottom: .75rem; }
+    .install-card { font-size: 0.74rem; padding: 0.75rem 0.85rem; }
+    .browser-visual { padding-bottom: 4rem; }
+  }
+</style>

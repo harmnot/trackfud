@@ -1,0 +1,60 @@
+---
+import { navLinks, faqs } from '../data/content';
+const year = new Date().getFullYear();
+---
+
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div class="footer-brand">
+      <p class="footer-name">Trackfud</p>
+      <p class="footer-slogan serif">run. ride. earn</p>
+      <p class="footer-text">Health-first food delivery. Customers order in the browser, runners and bikers deliver along their workout, merchants cook — no app download, for anyone.</p>
+    </div>
+    <nav aria-label="Explore">
+      <p class="footer-head">Explore</p>
+      {navLinks.map((l) => <a href={l.href}>{l.label}</a>)}
+    </nav>
+    <nav aria-label="Roles">
+      <p class="footer-head">Get started</p>
+      <a href="#customers">Order as a customer</a>
+      <a href="#couriers">Earn as a courier</a>
+      <a href="#merchants">Sell as a merchant</a>
+      <a href="#browser">Add to home screen</a>
+    </nav>
+    <div>
+      <p class="footer-head">Good to know</p>
+      <a href="#faq">{faqs[0].q}</a>
+      <a href="#faq">{faqs[2].q}</a>
+      <a href="#faq">{faqs[3].q}</a>
+    </div>
+  </div>
+  <div class="wrap footer-bottom">
+    <span>© {year} Trackfud. Run. Ride. Earn.</span>
+    <span>English · No download needed</span>
+  </div>
+</footer>
+
+<style>
+  .site-footer { border-top: 1px solid var(--tb-soft-line); padding: 3.5rem 0 2rem; background: #050506; }
+  .footer-grid { display: grid; grid-template-columns: 1.4fr 0.8fr 0.9fr 1fr; gap: 2rem; }
+  .footer-name { font-weight: 800; font-size: 1.4rem; letter-spacing: -0.03em; margin: 0; }
+  .footer-slogan { font-style: italic; color: var(--tb-muted); font-size: 1rem; margin: 0.2rem 0 0.9rem; }
+  .footer-text { color: var(--tb-muted); font-size: 0.9rem; margin: 0; max-width: 20rem; }
+  .footer-head { font-weight: 700; font-size: 0.85rem; margin: 0.2rem 0 0.9rem; }
+  .site-footer nav, .footer-grid > div:last-child { display: flex; flex-direction: column; align-items: flex-start; }
+  .site-footer nav a, .footer-grid > div:last-child a { color: var(--tb-muted); text-decoration: none; font-size: 0.9rem; font-weight: 500; padding: 0.28rem 0; transition: color 0.2s, transform 0.2s var(--tb-ease); }
+  .site-footer nav a:hover, .footer-grid > div:last-child a:hover { color: var(--tb-ink); transform: translateX(3px); }
+  .footer-bottom { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.6rem; border-top: 1px solid var(--tb-soft-line); margin-top: 2.5rem; padding-top: 1.4rem; color: var(--tb-faint); font-size: 0.8rem; }
+  @media (max-width: 800px) { .footer-grid { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 480px) { .footer-grid { grid-template-columns: 1fr; } }
+</style>
+
+<script type="application/ld+json" set:html={JSON.stringify({
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: faqs.map((f) => ({
+    '@type': 'Question',
+    name: f.q,
+    acceptedAnswer: { '@type': 'Answer', text: f.a },
+  })),
+})} />

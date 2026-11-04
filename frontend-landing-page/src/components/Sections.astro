@@ -1,0 +1,156 @@
+---
+import { steps, audiences, features, stories } from '../data/content';
+import PhoneMock from './PhoneMock.astro';
+
+const icons: Record<string, string> = {
+  route: '<path d="M6 19a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm12-10a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM6 16c6 0 6-6 12-10" />',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" />',
+  chat: '<path d="M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5Z" />',
+  camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.2" />',
+  pin: '<path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11Z" /><circle cx="12" cy="10" r="2.6" />',
+  shield: '<path d="M12 3l7 3v6c0 4.4-3 7.4-7 9-4-1.6-7-4.6-7-9V6z" /><path d="m9 12 2 2 4-4" />',
+};
+---
+
+<div class="marquee" aria-hidden="true">
+  <div class="marquee-track">
+    {[0, 1, 2, 3, 4, 5, 6, 7].map(() => (
+      <span class="marquee-chunk">Run. <em>Ride.</em> Earn. <i>·</i> No download <i>·</i> Run. <em>Ride.</em> Earn. <i>·</i> No app store <i>·</i>&nbsp;</span>
+    ))}
+  </div>
+</div>
+
+<section class="section" id="how-it-works" aria-labelledby="how-title">
+  <div class="wrap">
+    <div class="section-head" data-reveal>
+      <h2 id="how-title">One order, <em>three ways</em> to be part of it.</h2>
+      <p>Trackfud connects a hungry customer, a kitchen, and someone already out on a run or a ride. Here is the whole loop — no app store anywhere in it.</p>
+    </div>
+    <ol class="steps">
+      {steps.map((s, i) => (
+        <li class="step" data-reveal style={`--d:${i}`}>
+          <span class="step-n serif">{s.n}</span>
+          <h3>{s.title}</h3>
+          <p>{s.text}</p>
+        </li>
+      ))}
+    </ol>
+  </div>
+</section>
+
+{audiences.map((a, i) => (
+  <section class={`audience ${i % 2 ? 'flip' : ''}`} id={a.id} aria-labelledby={`${a.id}-title`}>
+    <div class="wrap audience-grid">
+      <div class="audience-media" data-reveal={i % 2 ? 'right' : 'left'}>
+        <figure class="audience-photo" aria-details={a.id}>
+          <img src={a.image} alt={a.alt} loading="lazy" />
+          <figcaption>{a.label}</figcaption>
+        </figure>
+        <div class="audience-phone" aria-details={a.id}><PhoneMock variant={a.phone} /></div>
+      </div>
+      <div class="audience-copy" data-reveal={i % 2 ? 'left' : 'right'}>
+        <p class="role-label">{a.label}</p>
+        <h2 id={`${a.id}-title`}>{a.title}</h2>
+        <p class="lede">{a.text}</p>
+        <ul class="point-list">
+          {a.points.map((p) => (
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6" /></svg>{p}</li>
+          ))}
+        </ul>
+        <a class="text-link" href={a.href}>{a.cta}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-6-6 6 6-6 6" /></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+))}
+
+<section class="section features-section" id="features" aria-labelledby="features-title">
+  <div class="wrap">
+    <div class="section-head" data-reveal>
+      <h2 id="features-title">Built for people <em>in motion.</em></h2>
+      <p>Everything in Trackfud assumes hands are busy, routes are already chosen, and the food has somewhere to be.</p>
+    </div>
+    <div class="features">
+      {features.map((f, i) => (
+        <article class="feature" data-reveal style={`--d:${i % 3}`}>
+          <span class="feature-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" set:html={icons[f.icon]} />
+          </span>
+          <h3>{f.title}</h3>
+          <p>{f.text}</p>
+        </article>
+      ))}
+    </div>
+  </div>
+</section>
+
+<style>
+  .marquee { border-block: 1px solid var(--tb-soft-line); padding: 1rem 0; overflow: hidden; background: rgba(255,255,255,0.015); }
+  .marquee-track { display: flex; width: max-content; will-change: transform; animation: marquee 26s linear infinite; font-family: var(--tb-serif); font-size: clamp(1.05rem, 2.4vw, 1.6rem); letter-spacing: -0.01em; color: var(--tb-ink); white-space: nowrap; }
+  .marquee-chunk { flex-shrink: 0; }
+  .marquee-track em { font-style: italic; color: var(--tb-muted); }
+  .marquee-track i { font-style: normal; color: var(--tb-faint); margin: 0 0.4rem; }
+  .marquee:hover .marquee-track { animation-play-state: paused; }
+
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; counter-reset: step; }
+  .step { background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.015)); border: 1px solid var(--tb-soft-line); border-radius: var(--tb-r-xl); padding: 1.6rem 1.5rem; box-shadow: var(--tb-sh-card); transition: transform 0.25s var(--tb-ease), border-color 0.25s; }
+  .step:hover { transform: translateY(-4px); border-color: rgba(255,255,255,0.18); }
+  .step-n { font-size: 2rem; color: var(--tb-faint); display: block; }
+  .step h3 { font-size: 1.08rem; letter-spacing: -0.015em; margin: 0.8rem 0 0.5rem; line-height: 1.35; }
+  .step p { color: var(--tb-body); font-size: 0.93rem; margin: 0; }
+
+  .audience { padding: clamp(3.5rem, 8vw, 6rem) 0; border-top: 1px solid var(--tb-soft-line); }
+  .audience-grid { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(2rem, 6vw, 5rem); align-items: center; }
+  .audience.flip .audience-media { order: 2; }
+  .audience-media { position: relative; min-height: 480px; }
+  .audience-photo { margin: 0; border-radius: 28px; overflow: hidden; border: 1px solid var(--tb-line); box-shadow: var(--tb-sh-card); position: relative; height: 480px; }
+  .audience-photo[aria-details="customers"] {   -webkit-transform: scaleX(-1); transform: scaleX(-1); }
+  .audience-photo img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.8s var(--tb-ease); }
+  .audience-media:hover .audience-photo img { transform: scale(1.05); }
+  .audience-photo figcaption { position: absolute; left: 1rem; bottom: 1rem; background: rgba(6,7,9,0.78); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.16); color: #fff; font-size: 0.74rem; font-weight: 700; padding: 0.45rem 0.8rem; border-radius: 999px; }
+  .audience-phone { position: absolute; right: -14px; bottom: -28px; transform: rotate(4deg); transition: transform 0.4s var(--tb-ease); }
+  .audience-phone :global(.phone) { width: clamp(148px, 42vw, 190px); box-shadow: 0 30px 60px rgba(0,0,0,0.7); }
+  .audience-media:hover .audience-phone { transform: rotate(1deg) translateY(-6px); }
+  .audience.flip .audience-phone { right: auto; left: -14px; transform: rotate(-4deg); }
+  .audience.flip .audience-media:hover .audience-phone { transform: rotate(-1deg) translateY(-6px); }
+  .role-label { font-family: var(--tb-serif); font-style: italic; font-size: 1.05rem; color: var(--tb-muted); margin: 0 0 0.7rem; }
+  .audience-copy h2 { font-family: var(--tb-serif); font-weight: 500; font-size: clamp(1.9rem, 4vw, 2.9rem); line-height: 1.08; letter-spacing: -0.02em; margin: 0 0 1rem; text-wrap: balance; }
+  .point-list { list-style: none; margin: 1.4rem 0; padding: 0; display: grid; gap: 0.65rem; }
+  .point-list li { display: flex; gap: 0.6rem; align-items: flex-start; color: var(--tb-body); font-size: 0.95rem; font-weight: 500; }
+  .point-list svg { width: 19px; height: 19px; flex-shrink: 0; margin-top: 0.15rem; color: var(--tb-good); }
+  .text-link { display: inline-flex; align-items: center; gap: 0.45rem; font-weight: 700; font-size: 0.94rem; text-decoration: none; border-bottom: 1px solid rgba(255,255,255,0.3); padding-bottom: 0.2rem; transition: border-color 0.2s, gap 0.2s var(--tb-ease); }
+  .text-link:hover { border-color: #fff; gap: 0.7rem; }
+  .text-link svg { width: 16px; height: 16px; }
+
+  .features-section { border-top: 1px solid var(--tb-soft-line); background: var(--tb-bg-2); }
+  .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  .feature { border: 1px solid var(--tb-soft-line); border-radius: var(--tb-r-lg); padding: 1.5rem 1.4rem; background: rgba(255,255,255,0.02); transition: transform 0.25s var(--tb-ease), background 0.25s, border-color 0.25s; }
+  .feature:hover { transform: translateY(-4px); background: rgba(255,255,255,0.045); border-color: rgba(255,255,255,0.16); }
+  .feature-icon { width: 44px; height: 44px; border-radius: 13px; border: 1px solid var(--tb-line); background: rgba(255,255,255,0.04); display: grid; place-items: center; }
+  .feature-icon svg { width: 21px; height: 21px; }
+  .feature h3 { font-size: 1rem; letter-spacing: -0.01em; margin: 1rem 0 0.45rem; }
+  .feature p { color: var(--tb-body); font-size: 0.9rem; margin: 0; }
+
+  @media (max-width: 900px) {
+    .steps, .features { grid-template-columns: 1fr 1fr; }
+    .audience-grid { grid-template-columns: 1fr; }
+    .audience.flip .audience-media { order: 0; }
+    .audience-media { min-height: 420px; }
+    .audience-photo { height: 420px; }
+  }
+  @media (max-width: 600px) {
+    .steps, .features { grid-template-columns: 1fr; }
+    .audience { padding: 3rem 0 3.5rem; }
+    .audience-media { min-height: 0; }
+    .audience-photo { height: min(88vw, 340px); border-radius: 20px; }
+    /* Cropped zoom: phone sits below the photo showing only the key card,
+       half the portrait height, slightly enlarged — nothing covers the people. */
+    .audience-phone { position: static; transform: none; margin: 1.2rem auto 0; }
+    .audience.flip .audience-phone { position: static; transform: none; margin: 1.2rem auto 0; }
+    .audience-phone :global(.phone) { width: min(320px, 86vw); aspect-ratio: 300 / 440; }
+    .audience-phone :global(.tb-nav) { display: none; }
+    .audience-phone :global(.phone-screen)::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 18%; background: linear-gradient(180deg, transparent, rgba(6,7,9,0.9)); pointer-events: none; }
+    .audience-copy { margin-top: 1.6rem; }
+  }
+</style>

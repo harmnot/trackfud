@@ -1,0 +1,96 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+const {
+  title = 'Trackfud — Run. Ride. Earn. | Food delivery powered by your workout',
+  description = 'Trackfud is the food delivery platform for customers, runners, bikers and merchants. No app download — order, deliver on your workout, and earn, straight from your browser.',
+} = Astro.props;
+const siteName = 'Trackfud';
+const ogImage = '/images/hero-runner.jpg';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="keywords" content="Trackfud, food delivery, run ride earn, courier, runner delivery, biker delivery, merchant, no download delivery app, food delivery in your browser" />
+    <meta name="author" content={siteName} />
+    <meta name="robots" content="index, follow" />
+    <meta name="theme-color" content="#060709" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/favicon.png" />
+    <link rel="preload" href="/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/newsreader-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={siteName} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:alt" content="A Trackfud runner carrying a food delivery backpack on a stadium track at sunrise" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+    <script type="application/ld+json" set:html={JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'Organization',
+      name: siteName,
+      slogan: 'Run. Ride. Earn.',
+      description,
+      logo: '/favicon.png',
+    })} />
+    <script type="application/ld+json" set:html={JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'WebSite',
+      name: siteName,
+      description,
+    })} />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <slot />
+    <script>
+      const io = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+        }
+      }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
+      document.querySelectorAll('[data-reveal]').forEach((el) => io.observe(el));
+
+      const counters = document.querySelectorAll('[data-count]');
+      const cio = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          const el = e.target as HTMLElement;
+          cio.unobserve(el);
+          const target = Number(el.dataset.count || 0);
+          const prefix = el.dataset.prefix || '';
+          const suffix = el.dataset.suffix || '';
+          const dur = 1100; const t0 = performance.now();
+          const tick = (t: number) => {
+            const p = Math.min(1, (t - t0) / dur);
+            const eased = 1 - Math.pow(1 - p, 3);
+            el.textContent = prefix + Math.round(target * eased).toLocaleString('en-US') + suffix;
+            if (p < 1) requestAnimationFrame(tick);
+          };
+          if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            el.textContent = prefix + target.toLocaleString('en-US') + suffix;
+          } else requestAnimationFrame(tick);
+        }
+      }, { threshold: 0.4 });
+      counters.forEach((el) => cio.observe(el));
+
+      const header = document.querySelector('[data-header]');
+      const onScroll = () => header?.classList.toggle('scrolled', window.scrollY > 24);
+      onScroll();
+      window.addEventListener('scroll', onScroll, { passive: true });
+    </script>
+  </body>
+</html>

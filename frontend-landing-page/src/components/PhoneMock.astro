@@ -1,0 +1,269 @@
+---
+// Phone simulator mirroring the real PWAs: same tb-* shell as
+// frontend-customer / frontend-runner-biker / frontend-merchant —
+// tb-topbar (loc badge + avatar), tb-display, tb-search, tb-promo,
+// tb-stats, tb-chips, tb-shop, tb-offer, tb-kitchen-bar, tb-nav.
+// All inner sizes use cqw so the mock scales with its own width
+// (hero 300px, audience 190px, small screens) like a real device.
+interface Props {
+  variant: 'customer' | 'courier' | 'merchant';
+  class?: string;
+}
+const { variant, class: cls = '' } = Astro.props;
+
+const pin = '<path d="M12 21s7-5.5 7-11a7 7 0 1 0-14 0c0 5.5 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>';
+const home = '<path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/>';
+const cart = '<circle cx="9" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/><path d="M3 3h2l2.4 12h10.4l2-8H6"/>';
+const user = '<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c1.4-3.4 4.2-5 7.5-5s6.1 1.6 7.5 5"/>';
+const search = '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/>';
+const bolt = '<path d="M13 2 4 14h6l-1 8 9-12h-6z"/>';
+const run = '<circle cx="14" cy="4.5" r="1.8"/><path d="m5 21 3.5-5L7 11l4-3 3 2 3 1"/><path d="M11 8l-2 5 3 3 1 5"/>';
+const box = '<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/>';
+const wallet = '<rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10h18M16 15h2"/>';
+const bell = '<path d="M6 16v-5a6 6 0 1 1 12 0v5l1.5 3h-15z"/><path d="M10 22a2.2 2.2 0 0 0 4 0"/>';
+const menu = '<path d="M4 6h16M4 12h16M4 18h10"/>';
+const coins = '<circle cx="9" cy="9" r="6"/><path d="M14.5 5.5A6 6 0 1 1 9 21a6 6 0 0 1-4.5-7.8"/>';
+const shop = '<path d="M4 7l1.2-3h13.6L20 7M4 7v13h16V7M4 7h16M9 20v-6h6v6"/>';
+---
+
+<div class={`phone ${cls}`} role="img" aria-label={
+  variant === 'courier' ? 'Trackfud courier app, Run Mode: live workout stats with an order offer that fits the route' :
+  variant === 'customer' ? 'Trackfud customer app, Home: restaurants sorted by distance with runners nearby' :
+  'Trackfud merchant app, Orders: incoming kitchen orders with accept and ready actions'
+}>
+  <span class="pm-keys" aria-hidden="true"><i class="k-vol"></i><i class="k-power"></i></span>
+  <div class="phone-screen">
+    <span class="pm-cam" aria-hidden="true"></span>
+    <div class="pm-status" aria-hidden="true"><span>07:12</span><span class="pm-status-icons"><i></i><i></i><i class="pm-batt"></i></span></div>
+
+    {variant === 'customer' && (
+      <>
+        <header class="tb-topbar">
+          <span class="tb-loc"><span class="tb-loc-badge"><svg viewBox="0 0 24 24" set:html={pin} /></span><span><small>Delivering to</small><strong>Hotel Sultan</strong></span></span>
+          <span class="tb-avatar">J</span>
+        </header>
+        <div class="pm-main pm-focus">
+          <h3 class="tb-display">Food that moves with runners</h3>
+          <div class="tb-search"><svg viewBox="0 0 24 24" set:html={search} /><span>Search restaurants…</span></div>
+          <div class="tb-promo">
+            <img src="/images/hero-runner.jpg" alt="" loading="lazy" />
+            <div class="tb-promo-body">
+              <span class="tb-promo-kicker"><svg viewBox="0 0 24 24" set:html={bolt} /> 30–60 min · workout delivery</span>
+              <p class="tb-promo-title">Food that moves with runners</p>
+              <p class="tb-promo-sub">Carried on a real morning run, not a motorbike.</p>
+            </div>
+          </div>
+          <div class="tb-chips"><span class="tb-chip on">All</span><span class="tb-chip">Satay</span><span class="tb-chip">Noodles</span><span class="tb-chip">Coffee</span></div>
+          <article class="tb-shop">
+            <span class="tb-shop-img">
+              <img src="/images/merchant-kitchen.jpg" alt="" loading="lazy" />
+              <span class="tb-float tb-float-live"><span class="pm-dot"></span>Runners & bikers nearby</span>
+              <span class="tb-float tb-float-rate"><b>★</b> 4.8 (24)</span>
+              <span class="tb-float tb-float-dist">0.8 km</span>
+            </span>
+            <span class="tb-shop-body"><span class="tb-shop-name">Sate Senayan GBK</span><span class="tb-shop-meta">Jl. Asia Afrika · ~15 min prep</span></span>
+          </article>
+        </div>
+        <nav class="tb-nav" aria-hidden="true">
+          <a class="on"><svg viewBox="0 0 24 24" set:html={home} />Restaurants</a>
+          <a><svg viewBox="0 0 24 24" set:html={pin} />Location</a>
+          <a><svg viewBox="0 0 24 24" set:html={cart} />Cart<em class="tb-count">2</em></a>
+          <a><svg viewBox="0 0 24 24" set:html={user} />Profile</a>
+        </nav>
+      </>
+    )}
+
+    {variant === 'courier' && (
+      <>
+        <header class="tb-topbar">
+          <span class="tb-loc"><span class="tb-loc-badge"><svg viewBox="0 0 24 24" set:html={run} /></span><span><small>Runner · Live</small><strong>Morning Run</strong></span></span>
+          <span class="tb-avatar">D</span>
+        </header>
+        <div class="pm-main pm-focus">
+          <p class="tb-rec"><span class="pm-dot"></span>Live · Runner — you're visible to dispatch</p>
+          <div class="tb-stats">
+            <div class="tb-stat"><strong>8.42</strong><span>km distance</span></div>
+            <div class="tb-stat"><strong>52:10</strong><span>Moving</span></div>
+            <div class="tb-stat"><strong>6′12″</strong><span>Pace</span></div>
+          </div>
+          <article class="tb-offer">
+            <div class="tb-offer-top"><span class="tb-chip on">Fits your route</span><span class="tb-offer-count">0:24</span></div>
+            <p class="tb-offer-fee">Rp <span data-count="16000">0</span></p>
+            <p class="tb-offer-fit">Sate Senayan GBK → Hotel Sultan</p>
+            <p class="tb-offer-meta">1.2 km to pickup · size M · say “accept” hands-free</p>
+            <div class="tb-offer-timer"><span></span></div>
+            <span class="tb-btn">Accept offer</span>
+            <span class="tb-btn tb-btn-soft">Decline — no penalty</span>
+          </article>
+        </div>
+        <nav class="tb-nav" aria-hidden="true">
+          <a class="on"><svg viewBox="0 0 24 24" set:html={run} />Run</a>
+          <a><svg viewBox="0 0 24 24" set:html={box} />Orders</a>
+          <a><svg viewBox="0 0 24 24" set:html={wallet} />Wallet</a>
+          <a><svg viewBox="0 0 24 24" set:html={user} />Profile</a>
+        </nav>
+      </>
+    )}
+
+    {variant === 'merchant' && (
+      <>
+        <header class="tb-topbar">
+          <span class="tb-loc"><span class="tb-loc-badge"><svg viewBox="0 0 24 24" set:html={shop} /></span><span><small>Merchant</small><strong>Sate Senayan GBK</strong></span></span>
+          <span class="tb-avatar">S</span>
+        </header>
+        <div class="pm-main pm-focus">
+          <h3 class="tb-display">Orders</h3>
+          <p class="tb-sub">Accept, cook, hand over with the pickup code.</p>
+          <div class="tb-kitchen-bar">
+            <span class="tb-btn">Start receiving orders</span>
+            <p class="tb-kitchen-state"><span class="pm-dot"></span>Live · receiving orders · push on</p>
+          </div>
+          <p class="tb-h2">Incoming (1)</p>
+          <article class="tb-card tb-order-new">
+            <span class="tb-order-row"><strong>#TF-2481</strong><strong>Rp 76.000</strong></span>
+            <p class="tb-person-sub">Size M · wallet · Sate Ayam ×2</p>
+            <span class="tb-prep"><span>Prep time</span><span class="tb-prep-btns"><i>−</i><strong>15′</strong><i>+</i></span></span>
+            <span class="tb-kitchen-actions"><span class="tb-btn tb-btn-sm">✓ Accept</span><span class="tb-btn tb-btn-sm tb-btn-danger">✕ Reject</span></span>
+          </article>
+        </div>
+        <nav class="tb-nav" aria-hidden="true">
+          <a><svg viewBox="0 0 24 24" set:html={shop} />Setup</a>
+          <a class="on"><svg viewBox="0 0 24 24" set:html={bell} />Orders</a>
+          <a><svg viewBox="0 0 24 24" set:html={menu} />Menu</a>
+          <a><svg viewBox="0 0 24 24" set:html={coins} />Earnings</a>
+        </nav>
+      </>
+    )}
+    <span class="pm-home" aria-hidden="true"></span>
+  </div>
+</div>
+
+<style>
+  /* Fluid frame: scales from hero (300px) down to small phones. */
+  .phone { container-type: inline-size; width: min(300px, 88vw); aspect-ratio: 300 / 615; background: #0a0a0c; border: none; border-radius: 3cqw; padding: 1cqw; box-shadow: 0 24px 60px rgba(0,0,0,0.6); position: relative; flex-shrink: 0; }
+  .phone-screen { height: 100%; background: linear-gradient(180deg, #0b0c0f, #060709); border-radius: 2.2cqw; position: relative; overflow: hidden; display: flex; flex-direction: column; font-size: 4.4cqw; }
+  .pm-keys i { position: absolute; display: block; width: 0.9cqw; min-width: 2px; background: #3d3e44; border-radius: 1cqw; z-index: 0; }
+  .pm-keys .k-vol { left: -1cqw; top: 21%; height: 15cqw; }
+  .pm-keys .k-power { right: -1cqw; top: 27%; height: 11cqw; }
+  .pm-cam { position: absolute; top: 2.6cqw; left: 50%; transform: translateX(-50%); width: 3.6cqw; height: 3.6cqw; background: radial-gradient(circle at center, #334155 0 26%, #000 34%); border: 1px solid rgba(255,255,255,0.08); border-radius: 50%; z-index: 3; }
+  .pm-home { position: absolute; bottom: 1.1cqw; left: 50%; transform: translateX(-50%); width: 34cqw; height: 1.3cqw; min-height: 3px; background: rgba(255,255,255,0.65); border-radius: 999px; z-index: 3; }
+  .pm-status { display: flex; justify-content: space-between; align-items: center; padding: 3.4cqw 6cqw 1cqw; font-size: 3.6cqw; font-weight: 700; color: var(--tb-muted); font-variant-numeric: tabular-nums; }
+  .pm-status-icons { display: inline-flex; gap: 1.4cqw; align-items: center; }
+  .pm-status-icons i { display: block; width: 4.4cqw; height: 2.6cqw; border-radius: 1cqw; background: rgba(255,255,255,0.35); }
+  .pm-status-icons i.pm-batt { width: 6.4cqw; background: rgba(255,255,255,0.55); }
+  .pm-main { flex: 1; min-height: 0; overflow: hidden; padding: 2cqw 4.6cqw 3cqw; display: flex; flex-direction: column; gap: 3cqw; }
+  .pm-dot { width: 2cqw; height: 2cqw; border-radius: 50%; background: var(--tb-good); display: inline-block; animation: pulse-dot 2s ease-in-out infinite; flex-shrink: 0; }
+
+  /* tb-topbar — same as the PWAs */
+  .tb-topbar { display: flex; align-items: center; justify-content: space-between; padding: 2.4cqw 4.6cqw; background: rgba(6,7,9,0.66); border-bottom: 1px solid var(--tb-soft-line); }
+  .tb-loc { display: flex; align-items: center; gap: 2.6cqw; min-width: 0; }
+  .tb-loc-badge { width: 11cqw; height: 11cqw; border-radius: 50%; background: linear-gradient(180deg, var(--tb-raised), rgba(255,255,255,0.03)); border: 1px solid var(--tb-line); display: grid; place-items: center; flex-shrink: 0; }
+  .tb-loc-badge svg { width: 5.2cqw; height: 5.2cqw; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .tb-loc small { display: block; font-size: 2.9cqw; color: var(--tb-faint); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; }
+  .tb-loc strong { display: block; font-size: 4.3cqw; font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; }
+  .tb-avatar { width: 11cqw; height: 11cqw; border-radius: 50%; background: linear-gradient(180deg, #fff, #d4d4d8); color: #09090b; display: grid; place-items: center; font-weight: 800; font-size: 4.4cqw; flex-shrink: 0; }
+
+  .tb-display { font-family: var(--tb-serif); font-weight: 500; font-size: 10cqw; letter-spacing: -0.02em; line-height: 1.08; margin: 0; }
+  .tb-sub { font-size: 3.9cqw; color: var(--tb-muted); margin: -1.4cqw 0 0; line-height: 1.45; }
+  .tb-h2 { font-size: 3.1cqw; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--tb-faint); margin: 1cqw 0 -0.6cqw; }
+
+  .tb-search { display: flex; align-items: center; gap: 2.4cqw; background: rgba(255,255,255,0.04); border: 1px solid var(--tb-soft-line); border-radius: 999px; padding: 0 4.4cqw; min-height: 11.5cqw; color: var(--tb-faint); font-size: 4cqw; font-weight: 500; }
+  .tb-search svg { width: 4.8cqw; height: 4.8cqw; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; flex-shrink: 0; }
+
+  .tb-promo { position: relative; border-radius: 4cqw; overflow: hidden; min-height: 42cqw; display: flex; align-items: flex-end; border: 1px solid rgba(255,255,255,0.12); flex-shrink: 0; }
+  .tb-promo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .tb-promo::after { content: ""; position: absolute; inset: 0; background: linear-gradient(200deg, rgba(0,0,0,0.05) 25%, rgba(0,0,0,0.86) 100%); }
+  .tb-promo-body { position: relative; z-index: 1; padding: 3.6cqw 4cqw; color: #fff; }
+  .tb-promo-kicker { display: inline-flex; align-items: center; gap: 1.2cqw; font-size: 2.7cqw; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.18); padding: 1cqw 2.6cqw; border-radius: 999px; }
+  .tb-promo-kicker svg { width: 3.4cqw; height: 3.4cqw; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+  .tb-promo-title { font-family: var(--tb-serif); font-weight: 500; font-size: 7.6cqw; letter-spacing: -0.01em; margin: 1.8cqw 0 0; line-height: 1.1; }
+  .tb-promo-sub { font-size: 3.5cqw; opacity: 0.85; font-weight: 500; margin: 0.8cqw 0 0; }
+
+  .tb-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2.2cqw; }
+  .tb-stat { background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.015)); border: 1px solid var(--tb-soft-line); border-radius: 3.4cqw; padding: 2.8cqw 1cqw; text-align: center; }
+  .tb-stat strong { display: block; font-size: 5cqw; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .tb-stat span { font-size: 2.5cqw; color: var(--tb-faint); font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; }
+
+  .tb-chips { display: flex; gap: 2cqw; overflow: hidden; }
+  .tb-chip { flex-shrink: 0; border-radius: 999px; padding: 1.8cqw 3.8cqw; font-size: 3.5cqw; font-weight: 600; background: rgba(255,255,255,0.04); border: 1px solid var(--tb-soft-line); color: var(--tb-muted); }
+  .tb-chip.on { background: var(--tb-ink); border-color: var(--tb-ink); color: #060709; }
+
+  .tb-shop { background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.018)); border-radius: 4cqw; overflow: hidden; border: 1px solid var(--tb-soft-line); display: block; }
+  .tb-shop-img { position: relative; height: 38cqw; overflow: hidden; display: block; }
+  .tb-shop-img > img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .tb-shop-img::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 55%, rgba(0,0,0,0.42)); }
+  .tb-float { position: absolute; z-index: 1; display: inline-flex; align-items: center; gap: 1.2cqw; font-size: 2.8cqw; font-weight: 700; padding: 1.1cqw 2.6cqw; border-radius: 999px; border: 1px solid rgba(255,255,255,0.16); }
+  .tb-float-live { top: 2.6cqw; left: 2.6cqw; background: rgba(6,40,26,0.82); color: #6ee7b7; }
+  .tb-float-rate { bottom: 2.6cqw; left: 2.6cqw; background: rgba(0,0,0,0.66); color: #fff; }
+  .tb-float-rate b { color: var(--tb-warn); }
+  .tb-float-dist { bottom: 2.6cqw; right: 2.6cqw; background: rgba(0,0,0,0.66); color: #fff; }
+  .tb-shop-body { padding: 3cqw 3.8cqw 3.6cqw; display: block; }
+  .tb-shop-name { font-weight: 700; font-size: 4.7cqw; letter-spacing: -0.02em; display: block; }
+  .tb-shop-meta { font-size: 3.4cqw; color: var(--tb-muted); font-weight: 500; display: block; margin-top: 0.6cqw; }
+
+  .tb-rec { display: flex; align-items: center; gap: 2cqw; font-size: 3.7cqw; font-weight: 600; color: var(--tb-body); background: rgba(255,255,255,0.035); border: 1px solid var(--tb-soft-line); border-radius: 3.4cqw; padding: 2.8cqw 3.6cqw; margin: 0; }
+  .tb-ring { width: 33cqw; height: 33cqw; margin: 0.5cqw auto; position: relative; flex-shrink: 0; }
+  .tb-ring svg { transform: rotate(-90deg); width: 100%; height: 100%; }
+  .ring-bg { fill: none; stroke: rgba(255,255,255,0.09); stroke-width: 7; }
+  .ring-fg { fill: none; stroke: #f4f4f5; stroke-width: 7; stroke-linecap: round; stroke-dasharray: 327; stroke-dashoffset: 105; }
+  .tb-ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .tb-ring-center strong { font-size: 6.8cqw; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1; }
+  .tb-ring-center span { font-size: 2.7cqw; text-transform: uppercase; letter-spacing: 0.1em; color: var(--tb-muted); font-weight: 700; margin-top: 1cqw; }
+
+  .tb-offer { background: rgba(20,22,26,0.96); border: 1px solid var(--tb-line); border-radius: 4cqw; padding: 5.2cqw 4.6cqw; display: flex; flex-direction: column; }
+  .tb-offer-top { display: flex; justify-content: space-between; align-items: center; gap: 2cqw; }
+  .tb-offer-count { font-size: 3.6cqw; font-weight: 700; color: var(--tb-muted); font-variant-numeric: tabular-nums; }
+  .tb-offer-fee { font-size: 11.6cqw; font-weight: 800; letter-spacing: -0.02em; margin: 2.4cqw 0 0; font-variant-numeric: tabular-nums; line-height: 1; }
+  .tb-offer-fit { font-size: 4.2cqw; font-weight: 600; margin: 1.6cqw 0 0; }
+  .tb-offer-meta { font-size: 3.4cqw; color: var(--tb-muted); margin: 0.8cqw 0 0; line-height: 1.45; }
+  .tb-offer-timer { height: 2.6cqw; border-radius: 999px; background: rgba(255,255,255,0.1); margin-top: 3.4cqw; overflow: hidden; }
+  .tb-offer-timer span { display: block; height: 100%; width: 72%; background: #fff; border-radius: 999px; }
+
+  .tb-btn { display: flex; align-items: center; justify-content: center; border-radius: 999px; font-weight: 700; font-size: 4.2cqw; min-height: 12cqw; padding: 0 4cqw; background: linear-gradient(180deg, #fff, #e4e4e7); color: #09090b; margin-top: 3.4cqw; text-align: center; }
+  .tb-btn-soft { background: transparent; color: var(--tb-muted); border: 1px solid var(--tb-line); margin-top: 2.2cqw; min-height: 10.5cqw; }
+  .tb-btn-danger { background: transparent; color: var(--tb-danger); border: 1px solid var(--tb-line); }
+  .tb-btn-sm { min-height: 10cqw; font-size: 3.8cqw; margin-top: 0; flex: 1; }
+  .tb-btn-block { width: 100%; }
+
+  .tb-kitchen-bar .tb-btn { margin-top: 0; width: 100%; }
+  .tb-kitchen-state { display: flex; align-items: center; gap: 2cqw; font-size: 3.5cqw; color: var(--tb-muted); font-weight: 500; margin: 2.4cqw 0 0; }
+  .tb-card { background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.015)); border: 1px solid var(--tb-soft-line); border-radius: 4cqw; padding: 4.6cqw 4.4cqw; display: flex; flex-direction: column; gap: 1.8cqw; }
+  .tb-order-new { border-color: rgba(255,255,255,0.22); }
+  .tb-order-row { display: flex; justify-content: space-between; align-items: center; font-size: 4.2cqw; }
+  .tb-person-sub { font-size: 3.5cqw; color: var(--tb-muted); margin: 0; font-weight: 500; }
+  .tb-badge-green { font-size: 3cqw; font-weight: 700; color: #6ee7b7; background: rgba(6,40,26,0.82); border: 1px solid rgba(52,211,153,0.3); padding: 1cqw 2.6cqw; border-radius: 999px; }
+  .tb-prep { display: flex; justify-content: space-between; align-items: center; font-size: 3.7cqw; font-weight: 600; color: var(--tb-body); }
+  .tb-prep-btns { display: inline-flex; align-items: center; gap: 2.6cqw; }
+  .tb-prep-btns i { font-style: normal; width: 8.6cqw; height: 8.6cqw; border-radius: 2.8cqw; border: 1px solid var(--tb-line); background: rgba(255,255,255,0.04); display: grid; place-items: center; font-weight: 700; }
+  .tb-prep-btns strong { font-variant-numeric: tabular-nums; }
+  .tb-kitchen-actions { display: flex; gap: 2.2cqw; }
+  .tb-card .tb-btn-block { margin-top: 1cqw; }
+
+  .tb-nav { display: flex; background: rgba(6,7,9,0.78); border-top: 1px solid var(--tb-soft-line); padding: 2cqw 2.4cqw 5.4cqw; gap: 1cqw; flex-shrink: 0; }
+  .tb-nav a { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1.1cqw; font-size: 2.7cqw; font-weight: 700; letter-spacing: 0.02em; color: var(--tb-faint); padding: 1.8cqw 0 1.2cqw; border-radius: 3.4cqw; position: relative; text-decoration: none; }
+  .tb-nav a svg { width: 6.4cqw; height: 6.4cqw; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  .tb-nav a.on { color: var(--tb-ink); background: rgba(255,255,255,0.07); }
+  .tb-nav a.on::after { content: ""; position: absolute; bottom: 0.8cqw; width: 1.4cqw; height: 1.4cqw; border-radius: 50%; background: #fff; }
+  .tb-count { position: absolute; top: 0.6cqw; right: calc(50% - 4.6cqw); font-style: normal; background: #fff; color: #09090b; font-size: 2.6cqw; font-weight: 800; width: 4.6cqw; height: 4.6cqw; border-radius: 999px; display: grid; place-items: center; }
+  .tb-nav a { position: relative; }
+
+  /* Small phones (audience row, narrow viewports): relatively larger type
+     so the zoomed feature stays readable instead of shrinking with the frame. */
+  @container (max-width: 250px) {
+    .tb-display { font-size: 11.6cqw; }
+    .tb-sub { font-size: 5cqw; }
+    .tb-search { font-size: 4.8cqw; min-height: 13cqw; }
+    .tb-promo-title { font-size: 8.6cqw; }
+    .tb-promo-sub { font-size: 4.2cqw; }
+    .tb-chip { font-size: 4.2cqw; padding: 2.2cqw 4.4cqw; }
+    .tb-shop-name { font-size: 5.8cqw; }
+    .tb-shop-meta { font-size: 4.2cqw; }
+    .tb-offer-fee { font-size: 13cqw; }
+    .tb-offer-fit { font-size: 5cqw; }
+    .tb-offer-meta { font-size: 4.2cqw; }
+    .tb-btn { font-size: 5cqw; min-height: 14cqw; }
+    .tb-btn-sm { font-size: 4.6cqw; min-height: 12cqw; }
+    .tb-nav a { font-size: 3.6cqw; }
+    .tb-kitchen-state { font-size: 4.2cqw; }
+  }
+</style>

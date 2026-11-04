@@ -18,6 +18,7 @@ Then open in your browser:
 - Merchant: http://localhost:8000/merchant/
 - API health: http://localhost:8000/api/healthz (direct backend: http://localhost:8081/healthz)
 - Demo email inbox (Mailpit): http://localhost:8025
+- Landing page (marketing, standalone): `cd frontend-landing-page && npm run dev` → http://localhost:4321 — English-only SEO site (`Run. Ride. Earn.`) for customers, couriers and merchants; static build with `npm run build`. See `frontend-landing-page/README.md`
 
 Gateway paths work with or without the trailing slash
 (e.g. `/back-office` and `/back-office/` both route to the same app).

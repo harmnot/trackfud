@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+# Trackfud landing page — English only

@@ -1033,3 +1033,77 @@ Follow-up decision (user): don't block IDR — convert at checkout, tell the cus
 | Verify (LIVE 2026-11-03, sandbox) | Rp100.000 top-up → checkout **201** (`txn_01…`, charge **617¢ = $6.17** @ seed rate, `fx_quote` in response) → signed `transaction.completed` → **200** → payment `paid`, IDR wallet **149266→249266 (+100000 in full)**, USD wallet untouched. Replay → **200 duplicate:true**. Ledger: `fx_position` USD +617 / IDR −100000, `paddle_clearing` USD −717 (receivable from Paddle grows). USD regression top-up ($1→$2, no `fx_quote`) still 200/paid | backend logs, `payments` + `ledger_accounts` reads |
 
 Assumptions: quote locks at checkout (rate refreshes daily via `fxRefresh`; intra-day drift absorbed by the platform position — no spread or fee modeled yet; the `fx_position` balance is the visible P&L to reconcile later). Paddle minimum charge amounts are not enforced client-side — an undersized conversion surfaces Paddle's own error. Card orders in IDR now convert the same way (shared checkout/apply path) but the overlay copy for orders still says the USD total only — order-side notice copy is a follow-up.
+
+## Landing page (`frontend-landing-page/`) — 2026-11-04
+
+New public marketing site for Trackfud. English only, fully static Astro build, no backend/API dependency.
+
+| Item | Status | Evidence / notes |
+| --- | --- | --- |
+| Landing page | DONE (build verified) | Astro static site: hero (`Run. Ride. Earn.`), how-it-works, customers / couriers / merchants sections, features, people stories, PWA "no download" section, FAQ, final CTA, footer. All copy centralised in `src/data/content.ts`; components in `src/components/` (`Header`, `Hero`, `PhoneMock`, `Sections`, `Closing`, `Footer`); SEO head + JSON-LD in `src/layouts/Layout.astro` |
+| Design system parity | DONE | Exact PWA hex tokens: bg `#060709`, ink `#f4f4f5`, muted `#a1a1aa`, faint `#63636b`, line `rgba(255,255,255,0.1)`, good `#34d399`, warn `#fbbf24`, danger `#fb7185`; Newsreader + Inter self-hosted (copied from `frontend-customer/public/fonts/`) |
+| Phone simulator + people images | DONE | CSS phone mockups (`PhoneMock.astro`: customer / courier / merchant variants, animated route + count-up earnings); 4 AI-generated realistic people photos in `public/images/` (runner, biker, merchant kitchen, customer). `merchant.png` used only as `public/favicon.png`, never in banners |
+| Motion | DONE | Staggered hero lines, floating phones/chips, marquee slogan, scroll reveals, hover lifts + image zoom, FAQ accordion; `prefers-reduced-motion` respected |
+| SEO | DONE | Title/description/keywords, Open Graph + Twitter cards, `Organization` + `WebSite` + `FAQPage` JSON-LD, semantic landmarks, single `<h1>`, alt text, `robots.txt` |
+| Verify | DONE | `npm run build` green (1 static page in `dist/`); dev server smoke-checked. CTAs intentionally scroll to on-page sections only (no app links wired yet, per confirmation) |
+
+Assumptions: marketing copy is static content (no API fetch) because the landing page has no backend contract; the only illustrative numbers are inside the phone simulator UI. Gateway does not route the landing page yet — it runs standalone (`npm run dev` → http://localhost:4321).
+
+### Landing fixes (2026-11-04, user-reported from screenshot)
+
+| Fix | Change | Evidence |
+| --- | --- | --- |
+| Double navbar on desktop | Root cause: `.mobile-nav { display:flex }` overrode the UA `[hidden]` rule, so the collapsed mobile menu always rendered under the desktop header. Added `.mobile-nav[hidden] { display:none }` | `frontend-landing-page/src/components/Header.astro`; built CSS contains `.mobile-nav[…][hidden]{display:none}` |
+| Phone mock fidelity + responsiveness | `PhoneMock.astro` rewritten to mirror the real PWAs (`tb-topbar` loc badge + avatar, `tb-display`, `tb-search`, `tb-promo`, `tb-stats`, `tb-chips`, `tb-shop` with live/rating/distance floats, courier goal ring + `tb-offer` fee/timer/accept, merchant `tb-kitchen-bar` + order cards, `tb-nav` bottom bar with active dot) and to scale fluidly: `container-type: inline-size` + `cqw` units instead of a fixed 280px width, so hero (300px), back (158–218px) and audience (148–190px) sizes all scale proportionally | `frontend-landing-page/src/components/PhoneMock.astro`, `Hero.astro`, `Sections.astro` |
+| Regression check | New `scripts/verify.mjs` (11 checks: hidden nav rule, single site header, cqw scaling, PWA class fidelity) wired as `npm run verify`; failed 8/11 before the fix, passes 11/11 after | `frontend-landing-page/scripts/verify.mjs`, `package.json` |
+
+### Landing fixes, round 2 (2026-11-04, user-reported from screenshot)
+
+| Fix | Change | Evidence |
+| --- | --- | --- |
+| Oval phone frames | Frame rebuilt as a real device: metallic bezel, `9cqw` radius (was `14cqw` pill), camera island, volume/power side keys, home indicator; removed fixed `min-width: 26px`-style minimums inside the mock that overflowed at 148–190px sizes, so all inner layout is purely proportional (`cqw`) | `frontend-landing-page/src/components/PhoneMock.astro` |
+| "PWA" jargon | All visitor-facing copy now says "No download" / "Works in your browser" / "one browser page each"; the acronym and "Progressive Web App" no longer appear anywhere in the built page; `#pwa` anchor renamed to `#browser` | `Layout.astro`, `data/content.ts`, `Hero.astro`, `Sections.astro`, `Closing.astro`, `Footer.astro`; verify check on `dist/index.html` |
+| Marquee + mobile responsiveness | Marquee type is now `clamp(1.05rem, 2.4vw, 1.6rem)` with non-shrinking chunks; hero phones shrink fluidly on small screens (main 72vw, backs 36vw, no `scale()` hack), hero/final CTAs go full-width under 480px, audience photo/phone and header compact under 600/480px, global wrap/button/section tightening under 480px | `Sections.astro`, `Hero.astro`, `Closing.astro`, `Header.astro`, `styles/global.css` |
+| Regression check | `scripts/verify.mjs` extended to 20 checks (jargon-free built page, device frame parts, no fixed inner minimums, marquee clamp, full-width mobile CTAs); failed 8 before, passes 20/20 after, `npm run build` green, dev server 200 | `frontend-landing-page/scripts/verify.mjs` |
+
+### Landing fixes, round 3 (2026-11-04, user-reported)
+
+| Fix | Change | Evidence |
+| --- | --- | --- |
+| Oval phone frames removed | Frame is now a squared slab (`5cqw` radius, flat dark bezel, `3.6cqw` screen radius); the oval camera island is replaced by a single camera dot; side keys + home indicator kept | `frontend-landing-page/src/components/PhoneMock.astro` |
+| Zoomed feature mocks | Each mock now zooms into its key feature at readable scale instead of squeezing a full page in: customer promo + shop card, courier offer fee + accept, merchant incoming order. The rest of the page crops at the screen edge like a real phone screenshot, with the bottom nav always visible | `PhoneMock.astro` (`.pm-focus`, larger display/promo/offer/shop sizes, smaller goal ring) |
+| Regression check | `verify.mjs` now also asserts no oval island, squared frame, and focus-crop mocks; 21/21 pass, build green | `frontend-landing-page/scripts/verify.mjs` |
+
+### Landing fixes, round 4 (2026-11-04, user-reported)
+
+| Fix | Change | Evidence |
+| --- | --- | --- |
+| Phone bezel padding removed | `PhoneMock` frame now has `padding: 0` with only a thin `1.4cqw` border as the bezel; the app screen fills the frame edge to edge | `frontend-landing-page/src/components/PhoneMock.astro` |
+| Install card mobile overflow | Root cause: the `floaty` keyframes (`translateY/rotate`) overrode the card's `translateX(-50%)` centring, shifting it half its width off-screen. Card is now margin-centred (`left/right: 0; margin-inline: auto; width: min(340px, 100% - 2rem)`) with no transform animation | `frontend-landing-page/src/components/Closing.astro` |
+| Marquee right-side gap on desktop | Track held only 2 chunks (~1,800px), narrower than wide viewports, so the loop ran out of content. Now 8 identical chunks (4 duplicated halves, ~9,000px+); `translateX(-50%)` loops seamlessly at any width | `frontend-landing-page/src/components/Sections.astro`; built HTML contains 8 `marquee-chunk` spans |
+| Regression check | `verify.mjs` at 24 checks, all passing; build green; dev server 200 | `frontend-landing-page/scripts/verify.mjs` |
+
+### Landing fixes, round 5 (2026-11-04, user-reported)
+
+| Fix | Change | Evidence |
+| --- | --- | --- |
+| Thick oval phone border removed | Phone frame is now a simple thin bezel only: no `border`, no `outline`, `1cqw` black bezel, `3cqw` outer radius and `2.2cqw` screen radius (nearly squared, professional slab) | `frontend-landing-page/src/components/PhoneMock.astro`; verify asserts thin bezel + no thick border |
+
+### Landing fixes, round 6 (2026-11-04, user-reported)
+
+| Fix | Change | Evidence |
+| --- | --- | --- |
+| Audience photo hidden by phone on mobile | Under 600px the mock no longer overlaps the photo: it renders statically, centred below it (`position: static`, no rotation), with the copy following underneath | `frontend-landing-page/src/components/Sections.astro` |
+| Readable zoomed mocks | Mocks show one feature each at readable scale: customer (headline + search + promo + chips + live shop card, no stats wall), courier (live pill + stats + big offer, no goal ring), merchant (incoming order only). A `@container (max-width: 250px)` query enlarges relative type on small phones so nothing shrinks to unreadable | `frontend-landing-page/src/components/PhoneMock.astro`; verify at 28 checks, all passing |
+
+### Landing fixes, round 7 (2026-11-04, user-reported)
+
+| Fix | Change | Evidence |
+| --- | --- | --- |
+| Separate phone card on mobile | Replaced the stacked separate-card layout with a modern half-bleed: under 600px the mock is half-cut by the screen edge (`right: -16%`, `47vw` width) over the photo, which stays fully visible; sections use `overflow: clip` so the bleed never scrolls the page | `frontend-landing-page/src/components/Sections.astro`; verify asserts the mobile bleed |
+
+### Landing fixes, round 8 (2026-11-04, user-reported)
+
+| Fix | Change | Evidence |
+| --- | --- | --- |
+| Cropped zoom mocks on mobile | Audience phones now sit below the photo (no overlap) as a cropped zoom: `300/440` portrait crop at `min(320px, 86vw)`, bottom nav hidden, bottom fade — only the key card shows, enlarged and readable | `frontend-landing-page/src/components/Sections.astro`; verify asserts the mobile crop |
