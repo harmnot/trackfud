@@ -164,6 +164,23 @@ refresh every boot. Verify: `GET /v1/admin/dashboard` as the CMS admin shows
 
 Full per-account list (all 30 test logins + demo logins): `docs/seed-accounts.md`.
 
+## Public packages + npm SEO (2026-11-04)
+
+Going public: `private: true` removed from every `package.json`
+(`frontend-*`) so the packages can be published, and each
+frontend now carries SEO metadata — `description`, `keywords`,
+`homepage` (`https://trackfud.netlify.app/`), `author` — built around the
+Trackfud brand (`Run. Ride. Earn.`: healthy food delivery, runner/biker
+couriers, merchant partners, no app download).
+
+Assumptions: repo visibility itself is set on GitHub, not by
+`package.json` (the flag only gates `npm publish`); `repository`/`bugs`
+are intentionally omitted until the public GitHub URL is confirmed —
+homepage currently points at the Netlify site for all packages; no
+`LICENSE` file exists in the repo yet, so no `license` field was set (add
+one before `npm publish`). No code, endpoint, or contract change —
+metadata only; `typecheck`/`smoke` unaffected.
+
 ## Dev without containers (optional)
 
 Backend: `podman run -d --name tf-db -e POSTGRES_USER=Trackfud -e POSTGRES_PASSWORD=Trackfud -e POSTGRES_DB=Trackfud -p 5432:5432 docker.io/postgis/postgis:18-3.6`, then `cd backend && DATABASE_URL=postgres://Trackfud:Trackfud@localhost:5432/Trackfud?sslmode=disable go run ./cmd/api`.

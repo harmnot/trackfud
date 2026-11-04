@@ -1,7 +1,20 @@
 {
     "name": "frontend-cms-admin",
     "version": "1.0.0",
-    "description": "",
+    "description": "Trackfud back-office admin CMS — approve couriers and merchants, monitor live orders on the map, refunds, payouts, platform settings, audit log and AI ops. Admin login required.",
+    "keywords": [
+      "trackfud",
+      "admin-dashboard",
+      "back-office",
+      "operations-dashboard",
+      "courier-approval",
+      "merchant-approval",
+      "order-monitoring",
+      "refunds",
+      "payouts",
+      "audit-log"
+    ],
+    "homepage": "https://trackfud.netlify.app/",
     "packageManager": "pnpm@12.16.1",
     "scripts": {
         "dev": "vite",
@@ -12,7 +25,6 @@
         "guards": "node scripts/guard-smoke.mjs"
     },
     "author": "Muhammad",
-    "private": true,
     "type": "module",
     "dependencies": {
         "@tanstack/react-query": "5.105.0",

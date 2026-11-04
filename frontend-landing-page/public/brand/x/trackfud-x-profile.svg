@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800" role="img" aria-label="Trackfud X profile picture">
+  <title>Trackfud — X profile</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@800&amp;family=Newsreader:ital,wght@1,500&amp;display=swap');
+  </style>
+  <rect width="800" height="800" fill="#060709"/>
+  <circle cx="150" cy="120" r="320" fill="#ffffff" opacity="0.045"/>
+  <circle cx="680" cy="700" r="300" fill="#ffffff" opacity="0.03"/>
+  <!-- safe-area ring: keep type inside -->
+  <circle cx="400" cy="400" r="252" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="2"/>
+  <!-- live-runner accent -->
+  <circle cx="400" cy="288" r="13" fill="none" stroke="#34d399" stroke-opacity="0.5" stroke-width="2"/>
+  <circle cx="400" cy="288" r="7" fill="#34d399"/>
+  <text x="400" y="412" text-anchor="middle" font-family="Inter, 'Segoe UI', system-ui, sans-serif" font-weight="800" font-size="104" letter-spacing="-3" fill="#f4f4f5">Trackfud</text>
+  <text x="400" y="476" text-anchor="middle" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="44" fill="#a1a1aa">run. ride. earn</text>
+</svg>

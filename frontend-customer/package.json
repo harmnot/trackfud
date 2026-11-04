@@ -1,7 +1,23 @@
 {
     "name": "frontend-customer",
     "version": "1.0.0",
-    "private": true,
+    "description": "Trackfud customer PWA — order healthy food online with live courier tracking, wallet and card checkout, PIN handover, ratings and impact stats. Works in the browser, no app download.",
+    "keywords": [
+        "trackfud",
+        "food-delivery",
+        "customer-app",
+        "order-food-online",
+        "live-order-tracking",
+        "wallet-pay",
+        "card-checkout",
+        "delivery-pin",
+        "food-ratings",
+        "pwa",
+        "react",
+        "vite"
+    ],
+    "homepage": "https://trackfud.netlify.app/",
+    "author": "Muhammad",
     "type": "module",
     "packageManager": "pnpm@12.16.1",
     "scripts": {

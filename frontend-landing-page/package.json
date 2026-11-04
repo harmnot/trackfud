@@ -1,18 +1,35 @@
 {
-  "name": "frontend-landing-page",
-  "type": "module",
-  "version": "0.0.1",
-  "engines": {
-    "node": ">=22.23.4"
-  },
-  "scripts": {
-    "dev": "astro dev",
-    "build": "astro build",
-    "preview": "astro preview",
-    "astro": "astro",
-    "verify": "npm run build && node scripts/verify.mjs"
-  },
-  "dependencies": {
-    "astro": "^7.4.5"
-  }
+    "name": "frontend-landing-page",
+    "type": "module",
+    "version": "0.0.1",
+    "description": "Trackfud — Run. Ride. Earn. Public marketing site for health-first food delivery: customers order online, runners and pedal-bikers deliver along their workout, merchants cook. No app download, works in the browser.",
+    "keywords": [
+        "trackfud",
+        "run-ride-earn",
+        "food-delivery",
+        "healthy-food-delivery",
+        "order-food-online",
+        "fitness-delivery",
+        "workout-delivery",
+        "courier-jobs",
+        "runner-earnings",
+        "restaurant-partners",
+        "pwa",
+        "no-app-download"
+    ],
+    "homepage": "https://trackfud.netlify.app/",
+    "author": "Muhammad",
+    "engines": {
+        "node": ">=22.23.4"
+    },
+    "scripts": {
+        "dev": "astro dev",
+        "build": "astro build",
+        "preview": "astro preview",
+        "astro": "astro",
+        "verify": "npm run build && node scripts/verify.mjs"
+    },
+    "dependencies": {
+        "astro": "^7.4.5"
+    }
 }

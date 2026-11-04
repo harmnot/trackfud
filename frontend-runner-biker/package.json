@@ -1,7 +1,23 @@
 {
     "name": "frontend-runner-biker",
     "version": "1.0.0",
-    "private": true,
+    "description": "Trackfud courier PWA for runners, pedal-bikers and merchant staff — Run Mode GPS tracking, delivery offers, voice copilot, earnings wallet and health stats. Earn while you work out.",
+    "keywords": [
+        "trackfud",
+        "courier-app",
+        "runner-jobs",
+        "biker-delivery",
+        "earn-while-running",
+        "workout-delivery",
+        "gps-tracking",
+        "voice-copilot",
+        "delivery-offers",
+        "pwa",
+        "react",
+        "vite"
+    ],
+    "homepage": "https://trackfud.netlify.app/",
+    "author": "Muhammad",
     "type": "module",
     "packageManager": "pnpm@12.16.1",
     "scripts": {

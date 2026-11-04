@@ -1,7 +1,23 @@
 {
     "name": "frontend-merchant",
     "version": "1.0.0",
-    "private": true,
+    "description": "Trackfud merchant PWA — accept live orders with loud kitchen alerts, manage menus with Snap-a-Menu photo import, staff, hours and earnings. Works in the browser, no app download.",
+    "keywords": [
+        "trackfud",
+        "food-delivery",
+        "merchant-app",
+        "restaurant-dashboard",
+        "online-ordering",
+        "menu-management",
+        "snap-a-menu",
+        "kitchen-orders",
+        "staff-management",
+        "pwa",
+        "react",
+        "vite"
+    ],
+    "homepage": "https://trackfud.netlify.app/",
+    "author": "Muhammad",
     "type": "module",
     "packageManager": "pnpm@12.16.1",
     "scripts": {

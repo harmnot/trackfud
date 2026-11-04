@@ -990,7 +990,7 @@ Brevo-validated sender before judging or real recipients may bounce.
 
 ## Real-time honesty: live courier dot, API impact line, courier push opt-in (2026-11-03, code DONE; live UNVERIFIED)
 
-Demo-video prep: three gaps where the UI told a weaker or invented story than
+prep: three gaps where the UI told a weaker or invented story than
 the backend already supports.
 
 | Track | Change | Evidence |
@@ -1132,3 +1132,55 @@ Per request: a single day-to-day guide for running the app locally.
 | No code change | Docs-only: every command/port/env var already existed in `scripts/podman-up.sh`, `compose.yaml`, `gateway/Caddyfile`, `backend/.env.example`, `frontend-*/.env.example` — the runbook adds no new behavior | — |
 
 Assumptions: Vite dev-server `/api → localhost:8081` proxy and default Vite ports as stated in `README.md` (no per-app `vite.config` override was inspected beyond the README claim); frontend `.env` files are git-ignored copies of `.env.example`. Verify: file present and internally cross-checked against the five source files — full command-by-command dry run (fresh `podman-up.sh`, mode C boot, volume-drop reseed) UNVERIFIED in this session.
+
+## X profile + banner brand kit (2026-11-04)
+
+Per request: turn the landing header wordmark into an X avatar + header.
+No backend change (static assets only — no API data, no endpoints, no
+secrets); no PWA change.
+
+| Item | Change | Evidence |
+| --- | --- | --- |
+| Profile (wordmark lockup) | `trackfud-x-profile-400.png` (upload-ready) + `-800` 2× master: near-black `#060709` with soft glows, hairline safe-area ring, live-runner dot, Inter ExtraBold `Trackfud` over Newsreader italic `run. ride. earn` — everything inside the X circle crop | `frontend-landing-page/public/brand/x/trackfud-x-profile-*.png` |
+| Profile (monogram alt) | `trackfud-x-profile-mono-400/800.png`: inverted `T` disc + live dot for reply-size legibility | `frontend-landing-page/public/brand/x/trackfud-x-profile-mono-*.png` |
+| Banner | `trackfud-x-banner-1500.png` (upload-ready, ≤5 MB) + `-3000` retina master: centred lockup + `Food carried by runners & bikers — in your browser.` subline, dashed route motif + `live` pill; centred so desktop avatar overlap and mobile centre-crop both keep it | `frontend-landing-page/public/brand/x/trackfud-x-banner-*.png` |
+| Vector masters | `trackfud-x-profile.svg`, `trackfud-x-profile-mono.svg`, `trackfud-x-banner.svg` (Google-Fonts import, print/web reuse) | `frontend-landing-page/public/brand/x/*.svg` |
+| Render pipeline | Pillow script drawing from the same self-hosted `public/fonts/` woff2 files (instanced to static TTF via fonttools — raw variable woff2 mis-shapes advances under Pillow); translucent art composited on an overlay so alpha blends honestly; sizes auto-fit inside safe areas | `/tmp/trackfud-x-render.py`, `frontend-landing-page/README.md` ("Brand / X kit") |
+
+Assumptions: full wordmark chosen as the primary avatar per the request
+(the mono `T` is the small-size alt); slogan `run. ride. earn` kept as
+the brand line. Verify: PNGs visually inspected at final size this
+session — live X upload + phone crop check UNVERIFIED.
+
+## Public packages + npm SEO (2026-11-04)
+
+Per request: project going public — `private: true` removed from every
+`package.json`, SEO metadata filled on every frontend package.
+
+| Item | Change | Evidence |
+| --- | --- | --- |
+| Un-privated | `"private": true` removed from `frontend-customer`, `frontend-merchant`, `frontend-runner-biker`, `frontend-cms-admin` (`frontend-landing-page` never had the flag) | each `package.json` |
+| SEO fields | Per-app `description` + `keywords` (Trackfud brand: `Run. Ride. Earn.`, food delivery, runner/biker couriers, merchants, no-download PWA) + shared `homepage` (`https://trackfud.netlify.app/`) + `author` (kept `Muhammad` on `frontend-cms-admin`) | each `frontend-*/package.json` |
+| No code change | Metadata only: no scripts, deps, endpoints, or contract changes | `node` JSON validation of all six files |
+
+Assumptions: repo visibility is set on GitHub, not by `package.json`
+(the flag only gates `npm publish`) — removal done per explicit request
+against the keep-private recommendation; `repository`/`bugs` omitted
+until the public GitHub URL is confirmed (remote is a local `git-wsl`
+alias); no `license` field set — no `LICENSE` file exists in the repo,
+add one before publishing. Verify: JSON parse of all six `package.json`
+files green — `npm publish` dry-run + live search-indexing UNVERIFIED.
+
+## Per-folder READMEs (2026-11-04)
+
+Per request: every frontend + backend folder now has a readable README
+(features, flow, run, build); the landing README gained Features + Flow
+sections (run/build/SEO were already there).
+
+| Item | Change | Evidence |
+| --- | --- | --- |
+| New READMEs | `frontend-customer`, `frontend-merchant`, `frontend-runner-biker`, `frontend-cms-admin`, `backend` — each with Features (per-milestone), ASCII flow, Run locally, Build, env notes, demo logins pointer | each `README.md` |
+| Landing update | Features + Flow sections added (phone simulator, sections, design, SEO, CTA flow) | `frontend-landing-page/README.md` |
+| No code change | Docs-only: run/build commands match existing `package.json` scripts, `Makefile` targets, and `.env.example` files | — |
+
+Assumptions: `pnpm` used in run/build snippets (matches each `packageManager` field; `npm` works too); serve paths (`/customer/`, `/courier/`, `/merchant/`, `/back-office/`) and demo logins mirror the root README. Verify: files present — command-by-command dry run of every snippet UNVERIFIED.

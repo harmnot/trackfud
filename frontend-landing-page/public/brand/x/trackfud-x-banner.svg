@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 500" width="1500" height="500" role="img" aria-label="Trackfud X banner">
+  <title>Trackfud — X banner</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@600;800&amp;family=Newsreader:ital,wght@1,500&amp;display=swap');
+  </style>
+  <rect width="1500" height="500" fill="#060709"/>
+  <circle cx="180" cy="40" r="420" fill="#ffffff" opacity="0.05"/>
+  <circle cx="1350" cy="480" r="460" fill="#ffffff" opacity="0.035"/>
+  <line x1="0" y1="60" x2="1500" y2="60" stroke="#ffffff" stroke-opacity="0.06"/>
+  <line x1="0" y1="440" x2="1500" y2="440" stroke="#ffffff" stroke-opacity="0.06"/>
+  <!-- route motif, echoes landing hero -->
+  <path d="M880 360 C 1020 300, 1080 220, 1180 220 S 1330 300, 1420 180" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="3" stroke-dasharray="10 10"/>
+  <circle cx="880" cy="360" r="20" fill="none" stroke="#34d399" stroke-opacity="0.5" stroke-width="2"/>
+  <circle cx="880" cy="360" r="10" fill="#34d399"/>
+  <circle cx="1180" cy="220" r="9" fill="#09090b" stroke="#f4f4f5" stroke-width="4"/>
+  <circle cx="1420" cy="180" r="9" fill="#f4f4f5"/>
+  <rect x="1120" y="120" width="150" height="44" rx="22" fill="#ffffff" fill-opacity="0.08" stroke="#ffffff" stroke-opacity="0.18"/>
+  <text x="1128" y="149" font-family="Inter, 'Segoe UI', system-ui, sans-serif" font-weight="600" font-size="24" fill="#d4d4d8">● live</text>
+  <text x="500" y="218" text-anchor="middle" font-family="Inter, 'Segoe UI', system-ui, sans-serif" font-weight="800" font-size="120" letter-spacing="-4" fill="#f4f4f5">Trackfud</text>
+  <text x="500" y="272" text-anchor="middle" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="40" fill="#a1a1aa">run. ride. earn</text>
+  <text x="500" y="330" text-anchor="middle" font-family="Inter, 'Segoe UI', system-ui, sans-serif" font-weight="600" font-size="27" fill="#d4d4d8">Food carried by runners &amp; bikers — order, earn &amp; sell in your browser.</text>
+</svg>
