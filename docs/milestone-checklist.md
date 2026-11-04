@@ -1107,3 +1107,28 @@ Assumptions: marketing copy is static content (no API fetch) because the landing
 | Fix | Change | Evidence |
 | --- | --- | --- |
 | Cropped zoom mocks on mobile | Audience phones now sit below the photo (no overlap) as a cropped zoom: `300/440` portrait crop at `min(320px, 86vw)`, bottom nav hidden, bottom fade — only the key card shows, enlarged and readable | `frontend-landing-page/src/components/Sections.astro`; verify asserts the mobile crop |
+
+## Business-flow visuals (2026-11-04)
+
+Per request: Mermaid business-flow diagrams in the README + an illustration image + an interactive walkthrough, so newcomers grasp the project at a glance.
+
+| Item | Change | Evidence |
+| --- | --- | --- |
+| README Mermaid (normative) | New "Business flow" section right under the intro: main `flowchart TD` (order → accept → dispatch cascade → single claim → ready wave → pickup/PIN handover → settle → fallbacks), plus collapsed `stateDiagram-v2` (order + delivery machines per `docs/app-context.md` §4) and `sequenceDiagram` (live order loop across all five surfaces) | `README.md` |
+| Overview image | Hand-drawn `docs/business-flow.svg` (1200×780): four actor cards around the Go-backend hub, numbered loop arrows, pickup→handover rail, money-loop + Meta-AI rails; embedded at the top of the README section | `docs/business-flow.svg` |
+| Interactive tour | New `docs/business-flow.html`: offline single-file page (no deps) with the SVG hero, tabbed flows (overview / customer / courier / merchant / admin / money & AI), tappable expandable steps, state chips, dispatch/money/AI tables; responsive ≤640px, dark-mode aware | `docs/business-flow.html`, linked from `README.md` |
+| No backend change | Docs-only: no new endpoints, no migration, no contract change — every state, fee and timeout shown already exists in `api/openapi.yaml` / `config.yaml` | — |
+
+Assumptions: "muse image" read as "a Muse-style illustration for the flow" — shipped as a hand-drawn SVG (always in sync, no API key needed) with a README note explaining how to drop in a Muse-Image-generated hero later; Mermaid renders natively on GitHub from the fenced blocks, no build step. Verify: `README.md` + both `docs/business-flow.*` files present; Mermaid fences balanced (3 open/close); SVG/HTML open clean — live GitHub render + real-phone read-through UNVERIFIED.
+
+## Local development runbook (2026-11-04)
+
+Per request: a single day-to-day guide for running the app locally.
+
+| Item | Change | Evidence |
+| --- | --- | --- |
+| New runbook | `docs/local-development-runbook.md`: three run modes (A `podman-up.sh`, B compose, C hybrid `go run` + `pnpm dev`), first-time `.env` setup, live-key table with per-key verify commands, port/env reference, per-track verify checklist, 14-row troubleshooting table, stop/cleanup | `docs/local-development-runbook.md` |
+| README pointer | One-line link to the runbook under the run-locally block | `README.md` |
+| No code change | Docs-only: every command/port/env var already existed in `scripts/podman-up.sh`, `compose.yaml`, `gateway/Caddyfile`, `backend/.env.example`, `frontend-*/.env.example` — the runbook adds no new behavior | — |
+
+Assumptions: Vite dev-server `/api → localhost:8081` proxy and default Vite ports as stated in `README.md` (no per-app `vite.config` override was inspected beyond the README claim); frontend `.env` files are git-ignored copies of `.env.example`. Verify: file present and internally cross-checked against the five source files — full command-by-command dry run (fresh `podman-up.sh`, mode C boot, volume-drop reseed) UNVERIFIED in this session.

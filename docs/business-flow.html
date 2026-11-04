@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Trackfud — Interactive Business Flow</title>
+<style>
+  :root{
+    --bg:#ffffff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0;
+    --blue:#0ea5e9; --amber:#f59e0b; --green:#16a34a; --violet:#8b5cf6;
+    --card:#f8fafc; --accent:#0f172a;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0b1220; --ink:#e2e8f0; --muted:#94a3b8; --line:#1e293b;
+      --card:#111c30; --accent:#e2e8f0; }
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--bg); color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; line-height:1.55; }
+  .wrap{ max-width:960px; margin:0 auto; padding:16px 16px 64px; }
+  header{ padding:20px 0 8px; }
+  header h1{ margin:0 0 4px; font-size:clamp(1.4rem,4vw,2rem); }
+  header p{ margin:0; color:var(--muted); }
+  .hero{ margin:16px 0; border:1px solid var(--line); border-radius:14px; overflow:hidden; background:#fff; }
+  .hero img{ display:block; width:100%; height:auto; }
+  nav.tabs{ display:flex; gap:8px; flex-wrap:wrap; margin:16px 0; position:sticky; top:0;
+    background:var(--bg); padding:8px 0; z-index:5; }
+  nav.tabs button{ border:1px solid var(--line); background:var(--card); color:var(--ink);
+    border-radius:999px; padding:9px 16px; font-size:.92rem; cursor:pointer; min-height:44px; }
+  nav.tabs button[aria-selected="true"]{ background:var(--accent); color:var(--bg); border-color:var(--accent); }
+  section.panel{ display:none; border:1px solid var(--line); border-radius:14px; padding:18px; background:var(--card); }
+  section.panel.active{ display:block; }
+  section.panel h2{ margin-top:0; }
+  ol.steps{ list-style:none; margin:0; padding:0; counter-reset:step; display:grid; gap:10px; }
+  ol.steps li{ counter-increment:step; border:1px solid var(--line); border-radius:10px;
+    padding:12px 12px 12px 52px; position:relative; background:var(--bg); cursor:pointer; }
+  ol.steps li::before{ content:counter(step); position:absolute; left:12px; top:12px;
+    width:28px; height:28px; border-radius:50%; display:grid; place-items:center;
+    font-weight:700; font-size:.85rem; color:#fff; background:var(--dot,var(--blue)); }
+  ol.steps li .detail{ display:none; color:var(--muted); font-size:.92rem; margin-top:6px; }
+  ol.steps li.open .detail{ display:block; }
+  ol.steps li strong{ display:block; }
+  .chips{ display:flex; flex-wrap:wrap; gap:6px; margin:10px 0; }
+  .chips span{ font-size:.8rem; border:1px solid var(--line); border-radius:999px; padding:3px 10px; background:var(--bg); }
+  table{ width:100%; border-collapse:collapse; font-size:.9rem; margin-top:8px; }
+  th,td{ text-align:left; padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .note{ color:var(--muted); font-size:.88rem; }
+  footer{ margin-top:24px; color:var(--muted); font-size:.85rem; }
+  a{ color:var(--blue); }
+  @media (max-width:640px){ th:nth-child(3),td:nth-child(3){ display:none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Trackfud — interactive business flow</h1>
+    <p>Health-first food delivery: customers order, runners &amp; pedal-bikers deliver along their workout, merchants cook. Tap any step for the why behind it. No logins, no backend calls — this page is a guided tour.</p>
+  </header>
+
+  <div class="hero">
+    <img src="./business-flow.svg" alt="Trackfud business flow diagram: customer, merchant, courier and admin connected through the Go backend, with money and AI rails" />
+  </div>
+
+  <nav class="tabs" role="tablist" aria-label="Flows">
+    <button role="tab" aria-selected="true" data-tab="overview">Overview loop</button>
+    <button role="tab" aria-selected="false" data-tab="customer">Customer</button>
+    <button role="tab" data-tab="courier" aria-selected="false">Courier</button>
+    <button role="tab" data-tab="merchant" aria-selected="false">Merchant</button>
+    <button role="tab" data-tab="admin" aria-selected="false">Admin</button>
+    <button role="tab" data-tab="money" aria-selected="false">Money &amp; AI</button>
+  </nav>
+
+  <section class="panel active" id="overview" role="tabpanel">
+    <h2>The loop in 8 steps</h2>
+    <p class="note">One order, end to end. Tap a step to expand it.</p>
+    <ol class="steps" style="--dot:#16a34a">
+      <li><strong>Customer orders &amp; pays</strong><span class="detail">Quote shows food + delivery fee + 3% service fee and the honest 30–60 min promise <em>before</em> payment. Wallet pays instantly; cards go through a server-created Paddle transaction so the overlay never handles an ad-hoc amount.</span></li>
+      <li><strong>Merchant accepts &amp; cooks</strong><span class="detail">Loud alert + push. Accept with a prep time, or reject for an automatic full refund. A 3-minute accept timeout protects the customer from a silent kitchen.</span></li>
+      <li><strong>Dispatch searches runners &amp; bikers</strong><span class="detail">PostGIS finds approved, non-busy couriers with a fresh GPS fix whose track corridor covers the restaurant (400 m runner / 800 m biker). Scoring blends detour, workout-goal fit and idle time. Declining never penalises.</span></li>
+      <li><strong>Courier accepts — exactly one</strong><span class="detail">The claim is an atomic <code>UPDATE … WHERE courier_id IS NULL</code>: one order, one courier, no double-accept. Everyone else's card clears instantly via an <code>offer.taken</code> frame.</span></li>
+      <li><strong>Food-ready wave</strong><span class="detail">Kitchens cook ~15 min but the accept-time search lives ~4 min, so tapping “Ready” restarts a fresh courier wave — the primary path offers actually arrive on.</span></li>
+      <li><strong>Pickup &amp; handover</strong><span class="detail">Two codes, two pairs: the merchant shows a pickup code to the courier; the customer says their 4-digit PIN face-to-face to the courier (photo also works). Codes never travel in chat.</span></li>
+      <li><strong>Settle &amp; celebrate</strong><span class="detail">Escrow releases at handover: courier keeps 95% of the fee + 100% of tips, merchant nets 90% (5% on staff legs). Customer gets the impact card — “You powered 2.4 km of Rina's run.”</span></li>
+      <li><strong>Fallbacks keep promises honest</strong><span class="detail">No runner/biker in 4 min → on-shift merchant staff (3 min) → customer chooses: wait 5 more, switch to pickup, or full refund. Support refunds cover pre-pickup cases; delivered orders go through finance.</span></li>
+    </ol>
+  </section>
+
+  <section class="panel" id="customer" role="tabpanel">
+    <h2>Customer flow</h2>
+    <div class="chips"><span>placed</span><span>accepted</span><span>ready</span><span>picked_up</span><span>delivered</span><span>completed</span></div>
+    <ol class="steps" style="--dot:#0ea5e9">
+      <li><strong>Set delivery point</strong><span class="detail">GPS, address search, draggable pin + note. The header always shows the live “Delivering to …” point.</span></li>
+      <li><strong>Pick a restaurant</strong><span class="detail">Sorted by distance with a real availability badge — “runners &amp; bikers nearby” only renders while an approved courier is actually online near that kitchen, otherwise “staff only”.</span></li>
+      <li><strong>Build the cart</strong><span class="detail">Only <em>travels-well</em> items can be delivered; the rest show as pickup-only. Menus are trilingual (en/id/ms) with a show-original toggle.</span></li>
+      <li><strong>Pay</strong><span class="detail">Wallet (instant, held in escrow) or Paddle card checkout. IDR top-ups convert to a USD charge at the daily rate while the wallet is credited the full IDR.</span></li>
+      <li><strong>Track live</strong><span class="detail">Courier dot moves on WebSocket frames with poll fallback, route + ETA, courier profile, cheer button (read aloud to the runner), and auto-translated chat.</span></li>
+      <li><strong>Hand over &amp; rate</strong><span class="detail">Say the PIN face-to-face. Then rate courier and restaurant separately, and keep the impact history of every workout you powered.</span></li>
+    </ol>
+  </section>
+
+  <section class="panel" id="courier" role="tabpanel">
+    <h2>Courier flow (runner / pedal-biker)</h2>
+    <div class="chips"><span>draft</span><span>testing</span><span>pending_review</span><span>approved</span><span>frozen / banned</span></div>
+    <ol class="steps" style="--dot:#16a34a">
+      <li><strong>Onboard once</strong><span class="detail">Sign up → pre-run checklist (GPS, Wake Lock, mic, notifications) → fitness test (runner 2 km/15 min, biker 5 km/20 min, moving time) → documents + consents → submit.</span></li>
+      <li><strong>Pass review</strong><span class="detail">An AI Trust Brief checks the test for cheating and reads the ID/bike photos; a human admin approves or rejects. Status locks while under review.</span></li>
+      <li><strong>Go online with a goal</strong><span class="detail">Start a work session with a workout goal (“easy 5 km”). The goal feeds dispatch matching — offers fit the run, not the other way round.</span></li>
+      <li><strong>Take offers hands-free</strong><span class="detail">30-second cards with sound, vibration and voice; Voice Copilot accepts (“yes”), reports distance, or pings the customer — all while running.</span></li>
+      <li><strong>Deliver &amp; earn</strong><span class="detail">Head-now nudge timed to food-ready → pickup code → route → PIN/photo → instant wallet credit. End the run to the “Earned &amp; moved” summary.</span></li>
+      <li><strong>Stay healthy</strong><span class="detail">WHO 150-min ring, streaks, personal bests, daily cap + rest-day nudges, weekly AI Coach, AI Run Planner loops past busy kitchens, GPX export.</span></li>
+    </ol>
+  </section>
+
+  <section class="panel" id="merchant" role="tabpanel">
+    <h2>Merchant flow</h2>
+    <div class="chips"><span>pending</span><span>approved</span><span>busy / paused</span><span>banned</span></div>
+    <ol class="steps" style="--dot:#f59e0b">
+      <li><strong>Set up the store</strong><span class="detail">Business profile, map pin (lat/lng + pickup note), hours in the store timezone, prep time.</span></li>
+      <li><strong>Snap-a-Menu</strong><span class="detail">Photograph the paper menu; AI returns multilingual items with size class and travels-well labels that dispatch actually enforces. Confirm prices before publishing.</span></li>
+      <li><strong>Sign the agreement</strong><span class="detail">Versioned e-sign including the staff-fallback clause (5% commission on staff legs vs 10%). Re-sign on every new version.</span></li>
+      <li><strong>Work the kitchen queue</strong><span class="detail">Accept + prep time → courier ETA → Ready → confirm the courier's pickup code. Reject refunds the customer automatically.</span></li>
+      <li><strong>Grow &amp; get paid</strong><span class="detail">Invite staff by email, toggle on-shift/can-deliver, track weekly earnings with exact commission math, pause or busy-mode the store any time.</span></li>
+    </ol>
+  </section>
+
+  <section class="panel" id="admin" role="tabpanel">
+    <h2>Admin (CMS) flow</h2>
+    <ol class="steps" style="--dot:#8b5cf6">
+      <li><strong>Triage the queues</strong><span class="detail">Courier and merchant applications with Trust Briefs, evidence photos, agreement text + hash. Approve or reject with a required reason; every decision emails + pushes.</span></li>
+      <li><strong>Watch it live</strong><span class="detail">Dashboard: today's counts, live courier dots, active orders. Courier performance pages show 30-day acceptance/completion/in-window rates, WHO trends, overexertion guards and peer rank.</span></li>
+      <li><strong>Keep it safe</strong><span class="detail">Freeze (temporary, can't go online) / unfreeze / ban with reason + end date. Every action lands in the sanctions table and the unified audit log.</span></li>
+      <li><strong>Fix money cases</strong><span class="detail">Orders list + detail (audit timeline, chat, proof photo, journal money trail) with support refunds for pre-pickup orders; withdrawals monitor with hold/release.</span></li>
+      <li><strong>Tune the platform</strong><span class="detail">28 settings (tests, dispatch corridors, fees) with global + per-country scopes, no restart. AI-usage page and the Ops Copilot answer plain-words questions from read-only tools.</span></li>
+    </ol>
+  </section>
+
+  <section class="panel" id="money" role="tabpanel">
+    <h2>Money &amp; AI rails</h2>
+    <h3>Money (integer minor units, double-entry)</h3>
+    <table>
+      <tr><th>Step</th><th>What happens</th><th>Evidence</th></tr>
+      <tr><td>Top-up / card pay</td><td>Server mints a Paddle transaction; webhook (HMAC, deduped, idempotent) credits the wallet or confirms the order</td><td>Paddle sandbox; demo <code>simulate-paid</code></td></tr>
+      <tr><td>Escrow</td><td>Order value moves wallet → escrow on placement; card legs hold on webhook confirm</td><td><code>ChargePostings</code></td></tr>
+      <tr><td>Settle</td><td>At handover: courier 95% + tips, merchant 90% (95% on staff legs), platform fee + service fee</td><td><code>refundLegsFor</code> reverses</td></tr>
+      <tr><td>Withdraw</td><td>Couriers withdraw anytime; CMS holds/releases suspicious payouts with audit-logged reasons</td><td>mock payout in demo</td></tr>
+    </table>
+    <h3>Meta AI — inside the flow, never a side chatbot</h3>
+    <table>
+      <tr><th>Feature</th><th>Where it helps</th><th>Honesty rule</th></tr>
+      <tr><td>Voice Copilot</td><td>Hands-free accept / status while running</td><td>Server re-checks every voice confirmation</td></tr>
+      <tr><td>Snap-a-Menu</td><td>Photo → multilingual menu + dispatch labels</td><td>Merchant confirms prices before publish</td></tr>
+      <tr><td>Trust Brief</td><td>Test cheat-check + ID/bike photo read</td><td>Advisory only — admin decides</td></tr>
+      <tr><td>Translated chat + moderation</td><td>Courier ↔ customer thread</td><td>Flags, never silent blocks</td></tr>
+      <tr><td>AI Coach / Run Planner / Copilot</td><td>Weekly report, workout loops, ops Q&amp;A</td><td>Estimates labelled; humans decide</td></tr>
+    </table>
+    <p class="note">Chat/text AI routes to the Modal-hosted Muse Spark endpoint (<code>Bearer id.secret</code> over a <code>/v1</code> base); without keys every surface falls back to deterministic offline behaviour and says so.</p>
+  </section>
+
+  <footer>
+    Source of truth: <code>docs/app-context.md</code> + <code>PLAN.md</code> §§2–11. Order/delivery states, fees and timeouts are config-driven — this page describes defaults, the API is authoritative.
+  </footer>
+</div>
+<script>
+(function(){
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('nav.tabs button'));
+  function select(btn){
+    tabs.forEach(function(b){ b.setAttribute('aria-selected', b === btn ? 'true' : 'false'); });
+    document.querySelectorAll('section.panel').forEach(function(p){
+      p.classList.toggle('active', p.id === btn.getAttribute('data-tab'));
+    });
+  }
+  tabs.forEach(function(b){
+    b.addEventListener('click', function(){
+      select(b);
+      document.getElementById(b.getAttribute('data-tab')).scrollIntoView({block:'nearest'});
+    });
+  });
+  document.querySelectorAll('ol.steps li').forEach(function(li){
+    li.setAttribute('tabindex','0');
+    function toggle(){ li.classList.toggle('open'); }
+    li.addEventListener('click', toggle);
+    li.addEventListener('keydown', function(e){
+      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); toggle(); }
+    });
+  });
+})();
+</script>
+</body>
+</html>

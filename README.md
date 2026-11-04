@@ -2,6 +2,104 @@
 
 Health-first food delivery: customers order, runners/pedal-bikers deliver along their workout, merchants cook. Spec: `docs/app-context.md`, plan: `backend/AGENTS.md`, `frontend-*/AGENTS.md`.
 
+## Business flow
+
+![Trackfud business flow: customer, merchant, courier and admin connected through the Go backend, with money and AI rails](docs/business-flow.svg)
+
+**Interactive tour:** open [`docs/business-flow.html`](docs/business-flow.html) in a browser — tabbed walkthrough (overview loop, customer, courier, merchant, admin, money & AI) with tappable steps, state chips and the honesty rules. Works offline, mobile-friendly, no login needed.
+
+> Image note: the SVG above is a hand-drawn overview (no model call needed, always in sync with the repo). To feature Meta's **Muse Image** model, generate a marketing hero from this same loop description and drop it next to the SVG — the Mermaid below stays the normative contract.
+
+```mermaid
+flowchart TD
+    Cust["Customer PWA<br/>browse - cart - pay - track - PIN - rate"]
+    Back["Go backend<br/>REST + WS - PostGIS dispatch<br/>ledger - River jobs"]
+    Merch["Merchant PWA<br/>accept - cook - ready - pickup code"]
+    Cour["Courier PWA<br/>run - offer - pickup - deliver"]
+    Staff["Staff mode<br/>fallback delivery"]
+    CMS["Admin CMS<br/>approve - monitor - refund - settings"]
+
+    Cust -->|"1 place order<br/>wallet / Paddle card"| Back
+    Back -->|"2 new order<br/>push + loud alert"| Merch
+    Merch -->|"3 accept + prep<br/>cook, then Ready"| Back
+    Back -->|"4 offers<br/>track-corridor cascade"| Cour
+    Cour -->|"5 accept<br/>atomic claim, exactly one"| Back
+    Back -->|"6 courier found<br/>name + live map + ETA"| Cust
+    Back -->|"6 courier found<br/>name + mode"| Merch
+    Merch -->|"7 Ready wave<br/>fresh offers if unclaimed"| Back
+    Back -->|"8 head-now nudge<br/>timed to food-ready"| Cour
+    Cour -->|"9 pickup code"| Merch
+    Cour -->|"10 customer PIN / photo"| Cust
+    Back -->|"11 payout + WHO minutes"| Cour
+    Back -->|"11 impact card + receipt"| Cust
+    Back -.->|"no runner/biker in 4 min"| Staff
+    Staff -.->|"fallback leg<br/>same handover"| Back
+    CMS -->|"approve - freeze - refund<br/>hold/release - settings"| Back
+```
+
+<details>
+<summary>Order + delivery state machines (the two linked machines)</summary>
+
+```mermaid
+stateDiagram-v2
+    [*] --> awaiting_payment
+    awaiting_payment --> placed : paid
+    awaiting_payment --> [*] : payment failed
+    placed --> accepted : merchant accepts
+    placed --> cancelled : reject / 3 min timeout
+    accepted --> ready : kitchen Ready
+    accepted --> cancelled : support refund, pre-pickup
+    ready --> picked_up : pickup code
+    picked_up --> delivered : customer PIN / photo
+    delivered --> completed : auto after 72 h
+    cancelled --> [*] : full refund
+
+    state Delivery {
+        [*] --> searching
+        searching --> offered : offer sent
+        offered --> assigned : courier accepts
+        searching --> staff_searching : nobody in 4 min
+        staff_searching --> assigned : staff accepts
+        staff_searching --> no_courier : nobody in 3 min
+        no_courier --> searching : wait 5 more min
+        no_courier --> [*] : pickup / refund
+        assigned --> at_pickup
+        at_pickup --> picked_up
+        picked_up --> at_dropoff
+        at_dropoff --> delivered
+    }
+```
+
+</details>
+
+<details>
+<summary>Live order loop (sequence: who talks to whom)</summary>
+
+```mermaid
+sequenceDiagram
+    participant C as Customer
+    participant B as Backend
+    participant M as Merchant
+    participant R as Runner/Biker
+    participant A as Admin CMS
+    C->>B: POST /v1/customer/orders (quote + pay)
+    B->>M: order.status = placed (push + alert)
+    M->>B: accept + prep minutes
+    B->>R: offer.created (track-corridor cascade)
+    R->>B: accept (atomic claim)
+    B->>M: delivery.assigned (courier name)
+    B->>C: courier card + live map
+    M->>B: ready (fresh wave if unclaimed)
+    B->>R: delivery.leave_now nudge
+    R->>M: pickup code
+    R->>C: handover PIN, face to face
+    B->>R: payout settled to wallet
+    B->>C: impact card + receipt
+    A->>B: monitor - refund - hold/release
+```
+
+</details>
+
 ## Run locally (Podman + Postgres, one command)
 
 Requires Podman only (no compose provider needed):
@@ -24,6 +122,8 @@ Gateway paths work with or without the trailing slash
 (e.g. `/back-office` and `/back-office/` both route to the same app).
 
 Stop: `bash scripts/podman-up.sh --down`
+
+> Day-to-day guide (prereqs, three run modes, env reference, verify checklist, troubleshooting): [`docs/local-development-runbook.md`](docs/local-development-runbook.md).
 
 Every app has a **One-click demo login** (no password needed). Seeded fictional restaurants appear in Customer near Jakarta (-6.2088, 106.8456) and London.
 

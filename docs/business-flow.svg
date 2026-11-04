@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="780" viewBox="0 0 1200 780" role="img" aria-labelledby="bfTitle bfDesc">
+  <title id="bfTitle">Trackfud business flow — health-first delivery loop</title>
+  <desc id="bfDesc">How an order moves through Trackfud: customer orders, merchant cooks, runner or biker delivers as part of a workout, admin oversees, money settles through escrow, Meta AI assists along the way.</desc>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#475569"/>
+    </marker>
+    <marker id="arrBack" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 10 1 L 1 5 L 10 9 z" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="780" rx="16" fill="#ffffff" stroke="#e2e8f0" stroke-width="2"/>
+
+  <text x="600" y="44" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-size="27" font-weight="800" fill="#0f172a">Trackfud — health-first delivery loop</text>
+  <text x="600" y="70" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-size="15" fill="#64748b">Every order powers someone's workout · runners &amp; pedal-bikers deliver along their route</text>
+
+  <!-- Actor cards -->
+  <g font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+    <!-- Customer -->
+    <rect x="40" y="104" width="260" height="132" rx="12" fill="#f0f9ff" stroke="#0ea5e9" stroke-width="2"/>
+    <text x="58" y="130" font-size="16" font-weight="700" fill="#0369a1">1 · Customer PWA</text>
+    <text x="58" y="152" font-size="13" fill="#334155">browse · cart · quote</text>
+    <text x="58" y="171" font-size="13" fill="#334155">pay: wallet / Paddle card</text>
+    <text x="58" y="190" font-size="13" fill="#334155">live map · cheer · chat</text>
+    <text x="58" y="209" font-size="13" fill="#334155">4-digit PIN handover · rate</text>
+
+    <!-- Merchant -->
+    <rect x="900" y="104" width="260" height="132" rx="12" fill="#fffbeb" stroke="#f59e0b" stroke-width="2"/>
+    <text x="918" y="130" font-size="16" font-weight="700" fill="#92400e">2 · Merchant PWA</text>
+    <text x="918" y="152" font-size="13" fill="#334155">loud alert · accept + prep</text>
+    <text x="918" y="171" font-size="13" fill="#334155">mark ready · courier ETA</text>
+    <text x="918" y="190" font-size="13" fill="#334155">confirm pickup code</text>
+    <text x="918" y="209" font-size="13" fill="#334155">earnings · staff invites</text>
+
+    <!-- Courier -->
+    <rect x="900" y="470" width="260" height="140" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="918" y="496" font-size="16" font-weight="700" fill="#166534">3 · Courier PWA</text>
+    <text x="918" y="518" font-size="13" fill="#334155">fitness test → CMS approval</text>
+    <text x="918" y="537" font-size="13" fill="#334155">run / ride · 30s voice offers</text>
+    <text x="918" y="556" font-size="13" fill="#334155">pickup code → PIN / photo</text>
+    <text x="918" y="575" font-size="13" fill="#334155">instant payout · WHO ring</text>
+    <text x="918" y="594" font-size="13" fill="#334155">staff mode = fallback leg</text>
+
+    <!-- Admin -->
+    <rect x="40" y="470" width="260" height="140" rx="12" fill="#f5f3ff" stroke="#8b5cf6" stroke-width="2"/>
+    <text x="58" y="496" font-size="16" font-weight="700" fill="#5b21b6">4 · Admin CMS</text>
+    <text x="58" y="518" font-size="13" fill="#334155">approve couriers/merchants</text>
+    <text x="58" y="537" font-size="13" fill="#334155">live map · performance</text>
+    <text x="58" y="556" font-size="13" fill="#334155">freeze / ban · refunds</text>
+    <text x="58" y="575" font-size="13" fill="#334155">payouts hold/release</text>
+    <text x="58" y="594" font-size="13" fill="#334155">settings · audit · AI · Copilot</text>
+
+    <!-- Hub -->
+    <rect x="440" y="252" width="320" height="152" rx="14" fill="#0f172a"/>
+    <text x="600" y="282" text-anchor="middle" font-size="17" font-weight="800" fill="#ffffff">Go backend · Postgres + PostGIS</text>
+    <text x="600" y="306" text-anchor="middle" font-size="13" fill="#cbd5e1">REST + WebSocket hub · one guarded Transition()</text>
+    <text x="600" y="328" text-anchor="middle" font-size="13" fill="#cbd5e1">track-corridor dispatch cascade</text>
+    <text x="600" y="350" text-anchor="middle" font-size="13" fill="#cbd5e1">double-entry ledger (minor units) · River jobs</text>
+    <text x="600" y="372" text-anchor="middle" font-size="13" fill="#cbd5e1">R2 files · Brevo/Mailpit · Paddle sandbox</text>
+  </g>
+
+  <!-- Flow arrows -->
+  <g font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-size="12.5" fill="#334155">
+    <path d="M 300 150 C 360 160, 390 210, 440 262" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
+    <text x="336" y="182">order + pay</text>
+
+    <path d="M 760 262 C 810 210, 840 160, 900 150" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
+    <text x="800" y="182">new order</text>
+
+    <path d="M 900 205 C 830 220, 800 235, 762 246" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
+    <text x="786" y="222">accept · ready</text>
+
+    <path d="M 760 330 C 810 380, 845 430, 900 472" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
+    <text x="812" y="412">offers</text>
+
+    <path d="M 898 545 C 830 520, 800 430, 762 380" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
+    <text x="700" y="492">accept · GPS · ETA</text>
+
+    <path d="M 440 340 C 390 380, 360 420, 302 462" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
+    <text x="322" y="428">live map · impact</text>
+
+    <!-- pickup/handover vertical -->
+    <path d="M 1180 470 L 1180 236" fill="none" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arr)"/>
+    <text x="1172" y="360" text-anchor="end" font-weight="600" fill="#166534">pickup code → PIN handover</text>
+
+    <!-- admin double-headed -->
+    <path d="M 300 545 C 360 520, 400 430, 440 380" fill="none" stroke="#8b5cf6" stroke-width="2" marker-end="url(#arr)" marker-start="url(#arrBack)"/>
+    <text x="330" y="492" fill="#5b21b6">review · refund · payouts</text>
+  </g>
+
+  <!-- Bottom rails -->
+  <g font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+    <rect x="40" y="636" width="548" height="104" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+    <text x="60" y="662" font-size="14" font-weight="700" fill="#0f172a">Money loop (audited, minor units)</text>
+    <text x="60" y="684" font-size="12.5" fill="#334155">wallet top-up (Paddle txn → webhook) → escrow on order →</text>
+    <text x="60" y="703" font-size="12.5" fill="#334155">settle: courier 95% + merchant (10% / 5% staff) → withdraw anytime</text>
+    <text x="60" y="722" font-size="12.5" fill="#334155">cancel / reject / timeout → full refund · payouts hold / release</text>
+
+    <rect x="612" y="636" width="548" height="104" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+    <text x="632" y="662" font-size="14" font-weight="700" fill="#0f172a">Meta AI rails (Modal · Muse Spark)</text>
+    <text x="632" y="684" font-size="12.5" fill="#334155">Voice Copilot · Snap-a-Menu · Trust Brief</text>
+    <text x="632" y="703" font-size="12.5" fill="#334155">translated + moderated chat · weekly AI Coach</text>
+    <text x="632" y="722" font-size="12.5" fill="#334155">AI Run Planner · Ops Copilot (advisory — humans decide)</text>
+  </g>
+</svg>
